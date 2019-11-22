@@ -1,16 +1,11 @@
-#include<iostream>
+#include<cstdio>
 #include<fstream>
 #include<cmath>
-#include<string>
-#include<cstdio>
-#include<cstring>
-#include<sys/time.h>
 #include<cuda.h>
 
 int threshold=256;
 int xthread=32;
 
-using namespace std;
 
 
 __global__ void  multiply(float* A,float* B,float* C,int jump,int jump1,int jump2,int iter)
@@ -307,17 +302,17 @@ int nearest_ideal(int &n,int &temp)
 
 int main(int argc,char** argv)
 {
-  ifstream in(argv[1]);
-  ifstream in1(argv[2]);
-  ofstream out(argv[3]);
+  std::ifstream in(argv[1]);
+  std::ifstream in1(argv[2]);
+  std::ofstream out(argv[3]);
   float *A,*B,*C;
   int n1,n2,n3;
   int temp1,temp2,temp3;
   in>>n1>>n2;
   in1>>n2>>n3;
   int power=nearest_ideal(n1,temp1);
-  power=min(power,nearest_ideal(n2,temp2));
-  power=min(power,nearest_ideal(n3,temp3));
+  power=std::min(power,nearest_ideal(n2,temp2));
+  power=std::min(power,nearest_ideal(n3,temp3));
   float factor=0;
   for(int i=power;i>1;i/=2)
      factor+=1/(float)(i*i);
@@ -373,7 +368,7 @@ int main(int argc,char** argv)
   cudaMemcpy (C, d_C, sizeof(float)*n1*n3, cudaMemcpyDeviceToHost);
   printf("Error %s \n",cudaGetErrorString(cudaGetLastError()));
   double time_taken = (end.tv_nsec-start.tv_nsec)+1e+9*(end.tv_sec-start.tv_sec);
-  cout<<"StrassenRec3 - Time taken: "<<time_taken<<"\n";
+  printf("StrassenRec3 - Time taken: %f\n",time_taken);
   for(int i=0;i<n1-temp1;i++)
   {
     for(int j=0;j<n3-temp3;j++)
@@ -381,8 +376,8 @@ int main(int argc,char** argv)
     out<<"\n";
   }
 
-	ofstream ofile;
-        ofile.open(argv[3],ios_base::app);
+	std::ofstream ofile;
+        ofile.open(argv[4],std::ios_base::app);
         ofile<<"strassenRec1 - Time taken (us): "<<time_taken<<"\n";
         ofile.close();
   cudaFree(d_A);
