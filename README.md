@@ -1,6 +1,8 @@
 # matrix-multiplication-cuda
 this is a c++ cuda program for matrix multiplication of both square and non-square matrices
 
+The size of input files should be more than 32*32
+
 The input file should have row and column size in the first row.
 Then each row should have row elements separated by tab.
 
