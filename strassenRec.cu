@@ -378,7 +378,7 @@ int main(int argc,char** argv)
 
 	std::ofstream ofile;
         ofile.open(argv[4],std::ios_base::app);
-        ofile<<"strassenRec1 - Time taken (us): "<<time_taken<<"\n";
+        ofile<<"strassenRec1 - Time taken (ns): "<<time_taken<<"\n";
         ofile.close();
   cudaFree(d_A);
   cudaFree(d_B);
