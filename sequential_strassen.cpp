@@ -190,12 +190,12 @@ int main(int argc,char** argv)
 	B[i]=0;
   in1.close();
 
-  struct timeval start,end;
-  gettimeofday(&start,0);
+  struct timespec start,end;
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID,&start);
   strassen(A,n2,B,n3,C,n3,n1,n2,n3,iter,1);
-  gettimeofday(&end,0);
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID,&end);
 
-  cout<<"Time taken: "<<(end.tv_usec-start.tv_usec)+(1e+6)*(end.tv_sec-start.tv_sec);
+  cout<<"Time taken: "<<(end.tv_nsec-start.tv_nsec)+(1e+9)*(end.tv_sec-start.tv_sec);
   for(int i=0;i<n1-temp1;i++)
   {
     for(int j=0;j<n3-temp3;j++)

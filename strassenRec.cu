@@ -138,7 +138,7 @@ __global__ void kernel6(float* A,int jump,float* B,int jump1,int n1,float* C,int
 
 void strassen(float* A,int jump,float* B,int jump1,float* C,int jump2,int n1,int n2,int n3,float* temp1,float* temp2,int n,int n_)
 {
-  if(n1<=threshold || n3<=threshold)
+  if(n1<=threshold || n2<=threshold || n3<=threshold)
   {
     multiply <<<dim3(n3/xthread,n1/xthread),dim3(xthread,xthread)>>> (A,B,C,jump,jump1,jump2,n2/xthread);
   }

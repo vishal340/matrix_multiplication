@@ -1,0 +1,7 @@
+# !/bin/csh
+#PBS -N myjob
+#PBS -q course
+#PBS -l nodes=2:ppn=6
+
+          
+mpiexec -np 12 -f $PBS_NODEFILE ./mpi_mul
