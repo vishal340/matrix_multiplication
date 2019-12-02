@@ -133,32 +133,21 @@ void strassen(float* A,int jump,float* B,int jump1,float* C,int jump2,int n1,int
   }
 }
 
-void nearest_ideal(int &n,int &temp)
+int nearest_ideal(int &n,int &temp)
 {
-  temp=n/threshold;
-  int pow=2;
-
-  if(n>threshold)
-  {
-  while(temp/2>=1)
-  {
-    temp/=2;
+  temp=0;
+  int pow=1;
+  int m=n;
+  while(m>threshold){
+    if(m%2==1){
+      temp+=pow;
+      m++;
+    }
+    m/=2;
     pow*=2;
   }
-    if(n%threshold!=0)
-      temp=pow;
-    else
-      temp=pow/2;
-    if(n%temp!=0)
-    {
-      temp-=n%temp;
-      n+=temp;
-    }
-    else
-      temp=0;
-  }
-  else
-    temp=0;
+  n+=temp;
+  return pow;
 }
 
 int main(int argc,char** argv)
@@ -171,10 +160,10 @@ int main(int argc,char** argv)
   in>>n1>>n2;
   in1>>n2>>n3;
   out<<n1<<"\t"<<n3<<"\n";
-  int temp1=0,temp2=0,temp3=0;
-  nearest_ideal(n1,temp1);
-  nearest_ideal(n2,temp2);
-  nearest_ideal(n3,temp3);
+  int temp1,temp2,temp3;
+  int iter=nearest_ideal(n1,temp1);
+  iter=std::min(iter,nearest_ideal(n2,temp2));
+  iter=std::min(iter,nearest_ideal(n3,temp3));
 
   A=new float[n1*n2];
   B=new float[n2*n3];
@@ -202,13 +191,6 @@ int main(int argc,char** argv)
   in1.close();
 
   struct timeval start,end;
-  int iter=n1;
-  if(n2<iter)
-    iter=n2;
-  if(n3<iter)
-    iter=n3;
-  iter/=threshold;
-
   gettimeofday(&start,0);
   strassen(A,n2,B,n3,C,n3,n1,n2,n3,iter,1);
   gettimeofday(&end,0);
