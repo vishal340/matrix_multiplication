@@ -6,6 +6,7 @@
 //Please provide number of processor 
 //some SMALL multiple of sqaure for better result
 //like P=k*q^2 with k being small
+//This code performs C=A*B
 
 void add(float* A,int jump,float* B,int jump1,float* C,int jump2,int n1,int n2)
 {
@@ -188,36 +189,38 @@ int main(int argc,char** argv){
         iter[2]=std::min(iter[2],nearest_ideal(n[1],temp[1],iter[1],threshold));
         iter[2]=std::min(iter[2],nearest_ideal(n[2],temp[2],iter[0]*iter[1],threshold));
     }
-    //std::cout<<n[0]<<'\t'<<n[1]<<'\t'<<n[2]<<'\n';
+    
     MPI_Bcast(n,3,MPI_INT,0,MPI_COMM_WORLD);
     MPI_Bcast(iter,3,MPI_INT,0,MPI_COMM_WORLD);
     MPI_Bcast(temp,3,MPI_INT,0,MPI_COMM_WORLD);
+    //std::cout<<n[0]<<'\t'<<n[1]<<'\t'<<n[2]<<'\n';
     //std::cout<<iter[0]<<'\t'<<iter[1]<<'\t'<<iter[2]<<'\n';
     const int dim_rank[2]={(int)(rank/iter[1]), rank%iter[1]};
     const int m[3]={(int)(n[0]/(iter[0]*iter[1])),(int)(n[1]/iter[1]),(int)(n[2]/(iter[0]*iter[1]))};
 
-    float* matrix_loc1=new float[m[0]*m[1]];
+    float* matrix_loc1=new float[m[0]*m[1]];   //matrix A for local processor
     MPI_File matrix1;
     MPI_File_open(MPI_COMM_WORLD,argv[1],MPI_MODE_RDONLY,MPI_INFO_NULL,&matrix1);
     MPI_Datatype new_float1;
     MPI_Type_vector(m[0],m[1],n[1],MPI_FLOAT,&new_float1);
     MPI_Type_commit(&new_float1);
-    MPI_File_set_view(matrix1,2*sizeof(int)+sizeof(float)*(dim_rank[0]*n[1]*m[0]+dim_rank[1]*m[1]),MPI_FLOAT,new_float1,"native",MPI_INFO_NULL);
+    MPI_File_set_view(matrix1,2*sizeof(int)+sizeof(float)*(dim_rank[0]*n[1]*m[0]+ \
+                      dim_rank[1]*m[1]),MPI_FLOAT,new_float1,"native",MPI_INFO_NULL);
     MPI_File_read_all(matrix1,matrix_loc1,m[0]*m[1],MPI_FLOAT,MPI_STATUS_IGNORE);
     MPI_File_close(&matrix1);
 
-    float* matrix_loc2=new float[m[1]*m[2]];
+    float* matrix_loc2=new float[m[1]*m[2]];    //matrix B for local processor
     MPI_File matrix2;
     MPI_File_open(MPI_COMM_WORLD,argv[2],MPI_MODE_RDONLY,MPI_INFO_NULL,&matrix2);
     MPI_Datatype new_float2;
     MPI_Type_vector(m[1],m[2],n[2],MPI_FLOAT,&new_float2);
     MPI_Type_commit(&new_float2);
-    MPI_File_set_view(matrix2,2*sizeof(int)+sizeof(float)*((dim_rank[0]%iter[0])*m[2]*iter[1]+dim_rank[1]*m[1]*n[2] \
+    MPI_File_set_view(matrix2,2*sizeof(int)+sizeof(float)*((int)(dim_rank[0]/iter[0])*m[2]*iter[1]+dim_rank[1]*m[1]*n[2] \
                       +((dim_rank[0]%iter[0]+dim_rank[1])%iter[1])*m[2]),MPI_FLOAT,new_float2,"native",MPI_INFO_NULL);
     MPI_File_read_all(matrix2,matrix_loc2,m[1]*m[2],MPI_FLOAT,MPI_STATUS_IGNORE);
     MPI_File_close(&matrix2);
 
-    float** matrix_loc3=new float*[iter[0]];
+    float** matrix_loc3=new float*[iter[0]];    //matrix C for local processor
     for(int i=0;i<iter[0];i++)
     matrix_loc3[i]=new float[m[0]*m[2]]();
 
@@ -229,13 +232,13 @@ int main(int argc,char** argv){
         MPI_Status status1,status2;
           strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[k],m[2],m[0],m[1],m[2],iter[2],1);
           MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,(rank+iter[1]-1)%iter[1]+dim_rank[0]*iter[1],0, \
-                        (rank+1)%iter[1]+dim_rank[0]*iter[1],0,MPI_COMM_WORLD,&status1);
-          MPI_Sendrecv_replace(matrix_loc3[k],m[0]*m[2],MPI_FLOAT,(rank+iter[1]-1)%iter[1]+dim_rank[0]*iter[1],0, \
-                        (rank+1)%iter[1]+dim_rank[0]*iter[1],0,MPI_COMM_WORLD,&status2);
+                              (rank+1)%iter[1]+dim_rank[0]*iter[1],0,MPI_COMM_WORLD,&status1);
+          MPI_Sendrecv_replace(matrix_loc3[k],m[0]*m[2],MPI_FLOAT,(rank+iter[1]-1)%iter[1]+dim_rank[0]*iter[1],1, \
+                              (rank+1)%iter[1]+dim_rank[0]*iter[1],1,MPI_COMM_WORLD,&status2);
       }
       MPI_Status status3;
-      MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,(rank+NUM_processors-iter[1]*iter[1])%NUM_processors,0, \
-                    (rank+iter[1]*iter[1])%NUM_processors,0,MPI_COMM_WORLD,&status3);
+      MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,(rank+NUM_processors-iter[1]*iter[1])%NUM_processors,2, \
+                          (rank+iter[1]*iter[1])%NUM_processors,2,MPI_COMM_WORLD,&status3);
     }
     MPI_Barrier(MPI_COMM_WORLD);
     double end=MPI_Wtime();
@@ -260,7 +263,7 @@ int main(int argc,char** argv){
     MPI_Type_commit(&new_float3);
     for(int i=0;i<iter[0];i++){
         MPI_File_set_view(matrix3,2*sizeof(int)+sizeof(float)*(m[2]*iter[1]*i+dim_rank[0]*n[2]*m[0]+ \
-                          ((dim_rank[0]%iter[0]+dim_rank[1])%iter[1])*m[2]),MPI_FLOAT,new_float3,"native",MPI_INFO_NULL);
+                    ((dim_rank[0]%iter[0]+dim_rank[1])%iter[1])*m[2]),MPI_FLOAT,new_float3,"native",MPI_INFO_NULL);
         MPI_File_write_all(matrix3,matrix_loc3[i],m[0]*m[2],MPI_FLOAT,MPI_STATUS_IGNORE);
     }
     MPI_File_close(&matrix3);
