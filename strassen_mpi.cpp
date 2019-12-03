@@ -147,8 +147,8 @@ int nearest_ideal(int &n,int &temp,const int temp1,const int threshold)
     pow*=2;
     }
     temp*=temp1;
-    temp+=t;
     n+=temp;
+    temp+=t;
     return pow;
 }
 
