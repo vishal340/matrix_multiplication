@@ -8,6 +8,7 @@
 //like P=k*q^2 with k being small
 //This code performs C=A*B
 
+
 void add(float* A,int jump,float* B,int jump1,float* C,int jump2,int n1,int n2)
 {
 for(int i=0;i<n1;i++)
@@ -76,9 +77,7 @@ void strassen(float* A,const int jump,float* B,const int jump1, \
     strassen(temp1,m2,temp2,m3,C,jump2,m1,m2,m3,iter,flag);   //C11+=temp1*temp2
     if(flag)
     {
-      for(int i=0;i<m1;i++)
-        for(int j=0;j<m3;j++)
-          C[jump2*m1+m3+i*jump2+j]=C[i*jump2+j];  //C22+=C11
+      memcpy(C+jump2*m1+m3,C,sizeof(float)*m1*m3);      //C22+=C11
     }
     else
       atomic_add(C,jump2,C+jump2*m1+m3,jump2,m1,m3);  //C22+=C11
@@ -163,8 +162,6 @@ int main(int argc,char** argv){
     int* iter=new int[3];
     int* temp=new int[3]();
     int* n=new int[3]; //the three dimensions whole file and per processor respectively
-    if(NUM_processors<2)
-        throw("number of processors should be more than 1");
     if(rank==0){
         std::fstream in;
         in.open(argv[1],std::ios::in|std::ios::binary);
@@ -192,11 +189,13 @@ int main(int argc,char** argv){
     
     MPI_Bcast(n,3,MPI_INT,0,MPI_COMM_WORLD);
     MPI_Bcast(iter,3,MPI_INT,0,MPI_COMM_WORLD);
-    MPI_Bcast(temp,3,MPI_INT,0,MPI_COMM_WORLD);
-    //std::cout<<n[0]<<'\t'<<n[1]<<'\t'<<n[2]<<'\n';
-    //std::cout<<iter[0]<<'\t'<<iter[1]<<'\t'<<iter[2]<<'\n';
+    MPI_Bcast(temp,3,MPI_INT,0,MPI_COMM_WORLD); 
+
     const int dim_rank[2]={(int)(rank/iter[1]), rank%iter[1]};
     const int m[3]={(int)(n[0]/(iter[0]*iter[1])),(int)(n[1]/iter[1]),(int)(n[2]/(iter[0]*iter[1]))};
+
+    MPI_Status status;
+    MPI_Request request;
 
     float* matrix_loc1=new float[m[0]*m[1]];   //matrix A for local processor
     MPI_File matrix1;
@@ -206,7 +205,8 @@ int main(int argc,char** argv){
     MPI_Type_commit(&new_float1);
     MPI_File_set_view(matrix1,2*sizeof(int)+sizeof(float)*(dim_rank[0]*n[1]*m[0]+ \
                       dim_rank[1]*m[1]),MPI_FLOAT,new_float1,"native",MPI_INFO_NULL);
-    MPI_File_read_all(matrix1,matrix_loc1,m[0]*m[1],MPI_FLOAT,MPI_STATUS_IGNORE);
+    MPI_File_iread(matrix1,matrix_loc1,m[0]*m[1],MPI_FLOAT,&request);
+    MPI_Wait(&request,&status);
     MPI_File_close(&matrix1);
 
     float* matrix_loc2=new float[m[1]*m[2]];    //matrix B for local processor
@@ -215,58 +215,138 @@ int main(int argc,char** argv){
     MPI_Datatype new_float2;
     MPI_Type_vector(m[1],m[2],n[2],MPI_FLOAT,&new_float2);
     MPI_Type_commit(&new_float2);
-    MPI_File_set_view(matrix2,2*sizeof(int)+sizeof(float)*((int)(dim_rank[0]/iter[0])*m[2]*iter[1]+dim_rank[1]*m[1]*n[2] \
-                      +((dim_rank[0]%iter[0]+dim_rank[1])%iter[1])*m[2]),MPI_FLOAT,new_float2,"native",MPI_INFO_NULL);
-    MPI_File_read_all(matrix2,matrix_loc2,m[1]*m[2],MPI_FLOAT,MPI_STATUS_IGNORE);
+    MPI_File_set_view(matrix2,2*sizeof(int)+sizeof(float)*((int)(dim_rank[0]/iter[1])*m[2]*iter[1]+ \
+                      dim_rank[1]*m[1]*n[2]+((dim_rank[0]%iter[1]+dim_rank[1])%iter[1])*m[2]), \
+                      MPI_FLOAT,new_float2,"native",MPI_INFO_NULL);
+    MPI_File_iread(matrix2,matrix_loc2,m[1]*m[2],MPI_FLOAT,&request);
+    MPI_Wait(&request,&status);
     MPI_File_close(&matrix2);
 
     float** matrix_loc3=new float*[iter[0]];    //matrix C for local processor
     for(int i=0;i<iter[0];i++)
-    matrix_loc3[i]=new float[m[0]*m[2]]();
+        matrix_loc3[i]=new float[m[0]*m[2]]();
+    float** store_C=new float*[iter[0]];
+    for(int i=0;i<iter[0];i++)
+        store_C[i]=new float[m[0]*m[2]]();
 
+    MPI_Barrier(MPI_COMM_WORLD);
     double start=MPI_Wtime();
+
+    if(iter[0]>1){
+    if(iter[1]>1){
+    const int source1=((dim_rank[0]+iter[1]-1)%iter[1])*iter[1]+(rank+1)%iter[1]+(int)(dim_rank[0]/iter[1])*iter[1]*iter[1];
+    const int source2=(rank+1)%iter[1]+dim_rank[0]*iter[1];
+    const int source3=(rank+iter[1]*iter[1])%NUM_processors;
+    const int dest1=((dim_rank[0]+1)%iter[1])*iter[1]+(rank+iter[1]-1)%iter[1]+(int)(dim_rank[0]/iter[1])*iter[1]*iter[1];
+    const int dest2=(rank+iter[1]-1)%iter[1]+dim_rank[0]*iter[1];
+    const int dest3=(rank+NUM_processors-iter[1]*iter[1])%NUM_processors;
     for(int i=0;i<iter[0];i++)
     {
       int k=(i+(int)(dim_rank[0]/iter[1]))%iter[0];
       for(int j=0;j<iter[1];j++){
-        MPI_Status status1,status2;
+          //MPI_Status status1,status2;
           strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[k],m[2],m[0],m[1],m[2],iter[2],1);
-          MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,(rank+iter[1]-1)%iter[1]+dim_rank[0]*iter[1],0, \
-                              (rank+1)%iter[1]+dim_rank[0]*iter[1],0,MPI_COMM_WORLD,&status1);
-          MPI_Sendrecv_replace(matrix_loc3[k],m[0]*m[2],MPI_FLOAT,(rank+iter[1]-1)%iter[1]+dim_rank[0]*iter[1],1, \
-                              (rank+1)%iter[1]+dim_rank[0]*iter[1],1,MPI_COMM_WORLD,&status2);
+          for(int i=0;i<m[0]*m[2];i++)
+            store_C[k][i]+=matrix_loc3[k][i];
+          memset(matrix_loc3[k],0,sizeof(float)*m[0]*m[2]);
+          //std::cout<<matrix_loc3[k][0]<<'\t'<<rank<<'\n';
+          MPI_Barrier(MPI_COMM_WORLD);
+          MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest1,0,source1,0,MPI_COMM_WORLD,&status);
+          MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest2,1,source2,1,MPI_COMM_WORLD,&status);
+          //std::cout<<matrix_loc3[k][0]<<'\t'<<rank<<'\n';
       }
-      MPI_Status status3;
-      MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,(rank+NUM_processors-iter[1]*iter[1])%NUM_processors,2, \
-                          (rank+iter[1]*iter[1])%NUM_processors,2,MPI_COMM_WORLD,&status3);
+      MPI_Barrier(MPI_COMM_WORLD);
+      //MPI_Status status3;
+      MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest3,2,source3,2,MPI_COMM_WORLD,&status);
+    }
+    }
+    else{
+      const int dest=(rank+NUM_processors-1)%NUM_processors;
+      const int source=(rank+1)%NUM_processors;
+      for(int i=0;i<NUM_processors;i++)
+      {
+        int k=(i+rank)%NUM_processors;
+        strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[k],m[2],m[0],m[1],m[2],iter[2],1);
+        for(int i=0;i<m[0]*m[2];i++)
+            store_C[k][i]+=matrix_loc3[k][i];
+          memset(matrix_loc3[k],0,sizeof(float)*m[0]*m[2]);
+        //std::cout<<matrix_loc3[k][0]<<'\t'<<rank<<'\n';
+        MPI_Barrier(MPI_COMM_WORLD);
+        //MPI_Status status1;
+        MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest,0,source,0,MPI_COMM_WORLD,&status);
+      }
+    }
+    }
+    else{
+      if(iter[1]>1){
+        const int source1=((dim_rank[0]+iter[1]-1)%iter[1])*iter[1]+(rank+1)%iter[1]+(int)(dim_rank[0]/iter[1])*NUM_processors;
+        const int source2=(rank+1)%iter[1]+dim_rank[0]*iter[1];
+        const int dest1=((dim_rank[0]+1)%iter[1])*iter[1]+(rank+iter[1]-1)%iter[1]+(int)(dim_rank[0]/iter[1])*NUM_processors;
+        const int dest2=(rank+iter[1]-1)%iter[1]+dim_rank[0]*iter[1];
+        for(int j=0;j<iter[1];j++){
+          //MPI_Status status1,status2;
+          strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[0],m[2],m[0],m[1],m[2],iter[2],1);
+          for(int i=0;i<m[0]*m[2];i++)
+            store_C[0][i]+=matrix_loc3[0][i];
+          memset(matrix_loc3[0],0,sizeof(float)*m[0]*m[2]);
+          MPI_Barrier(MPI_COMM_WORLD);
+          MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest1,0,source1,0,MPI_COMM_WORLD,&status);
+          MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest2,1,source2,1,MPI_COMM_WORLD,&status);
+      }
+      }
+      else{
+        strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[0],m[2],m[0],m[1],m[2],iter[2],1);
+      }
     }
     MPI_Barrier(MPI_COMM_WORLD);
     double end=MPI_Wtime();
 
     if(rank==0){
+        std::cout<<store_C[0][0]<<'\t'<<store_C[0][1]<<'\t' \
+                  <<store_C[0][2]<<'\t'<<store_C[0][3]<<'\t' \
+                  <<store_C[0][4]<<'\t'<<store_C[0][5]<<'\n';
         std::cout<<"Time taken: "<<end-start<<'\n';
         std::fstream out;
         out.open(argv[3],std::ios::out|std::ios::binary);
         out.write((char*)&n[0],sizeof(int));
-        out.seekp(sizeof(int),std::ios::beg);
         out.write((char*)&n[2],sizeof(int));
         int fill=0;
-        out.seekp(sizeof(float)*(m[0]*m[2]-1),std::ios::cur);
+        out.seekp(sizeof(float)*(n[0]*n[2]-1),std::ios::cur);
         out.write((char*)&fill,sizeof(int));
         out.close();
     }
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_File matrix3;
-    MPI_File_open(MPI_COMM_WORLD,argv[3],MPI_MODE_WRONLY|MPI_MODE_CREATE,MPI_INFO_NULL,&matrix3);
-    MPI_Datatype new_float3;
-    MPI_Type_vector(m[0],m[2],n[2],MPI_FLOAT,&new_float3);
-    MPI_Type_commit(&new_float3);
-    for(int i=0;i<iter[0];i++){
-        MPI_File_set_view(matrix3,2*sizeof(int)+sizeof(float)*(m[2]*iter[1]*i+dim_rank[0]*n[2]*m[0]+ \
-                    ((dim_rank[0]%iter[0]+dim_rank[1])%iter[1])*m[2]),MPI_FLOAT,new_float3,"native",MPI_INFO_NULL);
-        MPI_File_write_all(matrix3,matrix_loc3[i],m[0]*m[2],MPI_FLOAT,MPI_STATUS_IGNORE);
+
+    if(temp[0]==0 && temp[1]==0 && temp[2]==0){
+      MPI_File matrix3;
+      MPI_File_open(MPI_COMM_WORLD,argv[3],MPI_MODE_WRONLY|MPI_MODE_CREATE,MPI_INFO_NULL,&matrix3);
+      MPI_Datatype new_float3;
+      MPI_Type_vector(m[0],m[2],n[2],MPI_FLOAT,&new_float3);
+      MPI_Type_commit(&new_float3);
+      for(int i=0;i<iter[0];i++){
+        MPI_File_set_view(matrix3,2*sizeof(int)+sizeof(float)*((int)(rank/(iter[1]*iter[1]))*(n[2]*m[0]+m[2]*i)*iter[1]+ \
+                          (dim_rank[0]%iter[1])*n[2]*m[0]+(((dim_rank[0]%iter[1])+dim_rank[1])%iter[1])*m[2]),\
+                          MPI_FLOAT,new_float3,"native",MPI_INFO_NULL);
+        //MPI_Status status1;
+        //MPI_Request request1;
+        MPI_File_iwrite(matrix3,store_C[i],m[0]*m[2],MPI_FLOAT,&request);
+        MPI_Wait(&request,&status);
     }
     MPI_File_close(&matrix3);
+    }
+    /*else{
+      
+    }*/
+
+    if(rank==0){
+        float fill1;
+        std::fstream in2;
+        in2.open(argv[3],std::ios::in|std::ios::binary);
+        in2.seekg((2)*sizeof(float),std::ios::beg);
+        in2.read((char*)&fill1,sizeof(float));
+        in2.close();
+        std::cout<<fill1<<'\n';
+    }
 
     MPI_Finalize();
     return 0;
