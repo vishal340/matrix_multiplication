@@ -6,7 +6,7 @@
 //Please provide number of processor 
 //some SMALL multiple of sqaure for better result
 //like P=k*q^2 with k being small
-//This code performs C=A*B
+//This code performs C+=A*B
 
 
 void add(float* A,int jump,float* B,int jump1,float* C,int jump2,int n1,int n2)
@@ -50,15 +50,8 @@ for(int j=0;j<n1;j+=2)
     }
 }
 
-void nonzero_C(float* C,int jump2,int m1,int m3)
-{
-  atomic_add(C+m3/2,jump2,C,jump2,m1/2,m3/2);
-  atomic_add(C+jump2*m1/2,jump2,C+jump2*m1/2+m3/2,jump2,m1/2,m3/2);
-  atomic_subtract(C,jump2,C+jump2*m1/2+m3/2,jump2,m1/2,m3/2);
-}
-
 void strassen(float* A,const int jump,float* B,const int jump1, \
-              float* C,const int jump2,const int n1,const int n2,const int n3,int iter,const bool flag)
+              float* C,const int jump2,const int n1,const int n2,const int n3,int iter)
 {
   if(iter==1)
     multiply(A,jump,B,jump1,C,jump2,n1,n2,n3);
@@ -68,67 +61,50 @@ void strassen(float* A,const int jump,float* B,const int jump1, \
     int m1=n1/2,m2=n2/2,m3=n3/2;
     float* temp1=new float[m1*m2];
     float* temp2=new float[m2*m3];
+    float* temp3=new float[m1*m3]();
 
-    //M1
     add(A,jump,A+jump*m1+m2,jump,temp1,m2,m1,m2);   //temp1=A11+A22
     add(B,jump1,B+jump1*m2+m3,jump1,temp2,m3,m2,m3);   //temp2=B11+B22
-    if(iter>1 && !flag)
-      nonzero_C(C,jump2,m1,m3);
-    strassen(temp1,m2,temp2,m3,C,jump2,m1,m2,m3,iter,flag);   //C11+=temp1*temp2
-    if(flag)
-    {
-      memcpy(C+jump2*m1+m3,C,sizeof(float)*m1*m3);      //C22+=C11
-    }
-    else
-      atomic_add(C,jump2,C+jump2*m1+m3,jump2,m1,m3);  //C22+=C11
+    strassen(temp1,m2,temp2,m3,temp3,m3,m1,m2,m3,iter);   //temp3=temp1*temp2
+    atomic_add(temp3,m3,C+jump2*m1+m3,jump2,m1,m3);  //C22+=temp3
+    atomic_add(temp3,m3,C,jump2,m1,m3);  //C11+=temp3
+    memset(temp3,0,sizeof(float)*m1*m3);
 
-    //M2
     add(A+jump*m1,jump,A+jump*m1+m2,jump,temp1,m2,m1,m2);  //temp1=A21+A22
-    if(iter>1 && !flag)
-      nonzero_C(C+jump2*m1,jump2,m1,m3);
-    strassen(temp1,m2,B,jump1,C+jump2*m1,jump2,m1,m2,m3,iter,flag);  //C21+=temp1*B11
+    strassen(temp1,m2,B,jump1,temp3,m3,m1,m2,m3,iter);  //temp3=temp1*B11
+    atomic_add(temp3,m3,C+jump2*m1,jump2,m1,m3);   //C21+=temp3
+    atomic_subtract(temp3,m3,C+jump2*m1+m3,jump2,m1,m3);  //C22-=temp3
+    memset(temp3,0,sizeof(float)*m1*m3);
 
-    //M5
     add(A,jump,A+m2,jump,temp1,m2,m1,m2);  //temp1=A11+A12
-    if(iter>1 && !flag)
-      nonzero_C(C+m3,jump2,m1,m3);
-    strassen(temp1,m2,B+jump1*m2+m3,jump1,C+m3,jump2,m1,m2,m3,iter,flag);  //C12+=temp1*B22
-    atomic_subtract(C+m3,jump2,C,jump2,m1,m3);  //C11-=C12
+    strassen(temp1,m2,B+jump1*m2+m3,jump1,temp3,m3,m1,m2,m3,iter);  //temp3=temp1*B22
+    atomic_add(temp3,m3,C+m3,jump2,m1,m3);    //C12+=temp3
+    atomic_subtract(temp3,m3,C,jump2,m1,m3);  //C11-=temp3
+    memset(temp3,0,sizeof(float)*m1*m3);
 
-    //M6
     subtract(A +jump*m1,jump,A ,jump,temp1,m2,m1,m2);   //temp1=A21-A11
     add(B,jump1,B+m3,jump1,temp2,m3,m2,m3);    //temp2=B11+B12
+    strassen(temp1,m2,temp2,m3,temp3,m3,m1,m2,m3,iter);   //temp3=temp1*temp2
+    atomic_add(temp3,m3,C+jump2*m1+m3,jump2,m1,m3);  //C22+=temp3
+    memset(temp3,0,sizeof(float)*m1*m3);
 
-    if(iter>1)
-      nonzero_C(C+jump2*m1+m3,jump2,m1,m3);
-    strassen(temp1,m2,temp2,m3,C+jump2*m1+m3,jump2,m1,m2,m3,iter,flag);   //C22+=temp1*temp2
-
-    atomic_subtract(C+jump2*m1,jump2,C+jump2*m1+m3,jump2,m1,m3);  //C22-=C21
-
-    //M7
     subtract(A+m2,jump,A+jump*m1+m2,jump,temp1,m2,m1,m2);   //temp1=A12-A22
     add(B+jump1*m2,jump1,B+jump1*m2+m3,jump1,temp2,m3,m2,m3);   //temp2=B21+B22
+    strassen(temp1,m2,temp2,m3,temp3,m3,m1,m2,m3,iter);  //temp3=temp1*temp2
+    atomic_add(temp3,m3,C,jump2,m1,m3);   //C11+=temp3
+    memset(temp3,0,sizeof(float)*m1*m3);
 
-    if(iter>1)
-      nonzero_C(C,jump2,m1,m3);
-    strassen(temp1,m2,temp2,m3,C,jump2,m1,m2,m3,iter,0);  //C11+=temp1*temp2
-
-    delete temp1;
-    temp1=new float[m1*m3]();
-
-    //M3
     subtract(B+m3,jump1,B+m3+jump1*m2,jump1,temp2,m3,m2,m3);  //temp2=B12-B22
-    strassen(A,jump,temp2,m3,temp1,m3,m1,m2,m3,iter,1);  //temp1=A11*temp2
-    atomic_add(temp1,m3,C+m3,jump2,m1,m3);  //C12=C12+temp1
-    atomic_add(temp1,m3,C+jump2*m1+m3,jump2,m1,m3);  //C22=C22+temp1
+    strassen(A,jump,temp2,m3,temp3,m3,m1,m2,m3,iter);  //temp3=A11*temp2
+    atomic_add(temp3,m3,C+m3,jump2,m1,m3);  //C12+=temp3
+    atomic_add(temp3,m3,C+jump2*m1+m3,jump2,m1,m3);  //C22+=temp3
+    memset(temp3,0,sizeof(float)*m1*m3);
 
-    memset(temp1,0,sizeof(float)*m1*m3);
-    //M4
     subtract(B+jump1*m2,jump1,B,jump1,temp2,m3,m2,m3);  //temp2=B21-B11
-    strassen(A+jump*m1+m2,jump,temp2,m3,temp1,m3,m1,m2,m3,iter,1);  //temp1=A22*temp2
-    atomic_add(temp1,m3,C+jump2*m1,jump2,m1,m3);  //C21=C21+temp1
-    atomic_add(temp1,m3,C,jump2,m1,m3);  //C11=C11+temp1
-    delete temp1,temp2;
+    strassen(A+jump*m1+m2,jump,temp2,m3,temp3,m3,m1,m2,m3,iter);  //temp3=A22*temp2
+    atomic_add(temp3,m3,C+jump2*m1,jump2,m1,m3);  //C21+=temp3
+    atomic_add(temp3,m3,C,jump2,m1,m3);  //C11+=temp3
+    delete temp1,temp2,temp3;
   }
 }
 
@@ -225,9 +201,6 @@ int main(int argc,char** argv){
     float** matrix_loc3=new float*[iter[0]];    //matrix C for local processor
     for(int i=0;i<iter[0];i++)
         matrix_loc3[i]=new float[m[0]*m[2]]();
-    float** store_C=new float*[iter[0]];
-    for(int i=0;i<iter[0];i++)
-        store_C[i]=new float[m[0]*m[2]]();
 
     MPI_Barrier(MPI_COMM_WORLD);
     double start=MPI_Wtime();
@@ -244,19 +217,12 @@ int main(int argc,char** argv){
     {
       int k=(i+(int)(dim_rank[0]/iter[1]))%iter[0];
       for(int j=0;j<iter[1];j++){
-          //MPI_Status status1,status2;
-          strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[k],m[2],m[0],m[1],m[2],iter[2],1);
-          for(int i=0;i<m[0]*m[2];i++)
-            store_C[k][i]+=matrix_loc3[k][i];
-          memset(matrix_loc3[k],0,sizeof(float)*m[0]*m[2]);
-          //std::cout<<matrix_loc3[k][0]<<'\t'<<rank<<'\n';
+          strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[k],m[2],m[0],m[1],m[2],iter[2]);
           MPI_Barrier(MPI_COMM_WORLD);
           MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest1,0,source1,0,MPI_COMM_WORLD,&status);
           MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest2,1,source2,1,MPI_COMM_WORLD,&status);
-          //std::cout<<matrix_loc3[k][0]<<'\t'<<rank<<'\n';
       }
       MPI_Barrier(MPI_COMM_WORLD);
-      //MPI_Status status3;
       MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest3,2,source3,2,MPI_COMM_WORLD,&status);
     }
     }
@@ -266,13 +232,8 @@ int main(int argc,char** argv){
       for(int i=0;i<NUM_processors;i++)
       {
         int k=(i+rank)%NUM_processors;
-        strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[k],m[2],m[0],m[1],m[2],iter[2],1);
-        for(int i=0;i<m[0]*m[2];i++)
-            store_C[k][i]+=matrix_loc3[k][i];
-          memset(matrix_loc3[k],0,sizeof(float)*m[0]*m[2]);
-        //std::cout<<matrix_loc3[k][0]<<'\t'<<rank<<'\n';
+        strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[k],m[2],m[0],m[1],m[2],iter[2]);
         MPI_Barrier(MPI_COMM_WORLD);
-        //MPI_Status status1;
         MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest,0,source,0,MPI_COMM_WORLD,&status);
       }
     }
@@ -284,27 +245,23 @@ int main(int argc,char** argv){
         const int dest1=((dim_rank[0]+1)%iter[1])*iter[1]+(rank+iter[1]-1)%iter[1]+(int)(dim_rank[0]/iter[1])*NUM_processors;
         const int dest2=(rank+iter[1]-1)%iter[1]+dim_rank[0]*iter[1];
         for(int j=0;j<iter[1];j++){
-          //MPI_Status status1,status2;
-          strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[0],m[2],m[0],m[1],m[2],iter[2],1);
-          for(int i=0;i<m[0]*m[2];i++)
-            store_C[0][i]+=matrix_loc3[0][i];
-          memset(matrix_loc3[0],0,sizeof(float)*m[0]*m[2]);
+          strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[0],m[2],m[0],m[1],m[2],iter[2]);
           MPI_Barrier(MPI_COMM_WORLD);
           MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest1,0,source1,0,MPI_COMM_WORLD,&status);
           MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest2,1,source2,1,MPI_COMM_WORLD,&status);
       }
       }
       else{
-        strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[0],m[2],m[0],m[1],m[2],iter[2],1);
+        strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[0],m[2],m[0],m[1],m[2],iter[2]);
       }
     }
     MPI_Barrier(MPI_COMM_WORLD);
     double end=MPI_Wtime();
 
     if(rank==0){
-        std::cout<<store_C[0][0]<<'\t'<<store_C[0][1]<<'\t' \
-                  <<store_C[0][2]<<'\t'<<store_C[0][3]<<'\t' \
-                  <<store_C[0][4]<<'\t'<<store_C[0][5]<<'\n';
+        std::cout<<matrix_loc3[0][0]<<'\t'<<matrix_loc3[0][1]<<'\t' \
+                  <<matrix_loc3[0][2]<<'\t'<<matrix_loc3[0][3]<<'\t' \
+                  <<matrix_loc3[0][4]<<'\t'<<matrix_loc3[0][5]<<'\n';
         std::cout<<"Time taken: "<<end-start<<'\n';
         std::fstream out;
         out.open(argv[3],std::ios::out|std::ios::binary);
@@ -327,9 +284,7 @@ int main(int argc,char** argv){
         MPI_File_set_view(matrix3,2*sizeof(int)+sizeof(float)*((int)(rank/(iter[1]*iter[1]))*(n[2]*m[0]+m[2]*i)*iter[1]+ \
                           (dim_rank[0]%iter[1])*n[2]*m[0]+(((dim_rank[0]%iter[1])+dim_rank[1])%iter[1])*m[2]),\
                           MPI_FLOAT,new_float3,"native",MPI_INFO_NULL);
-        //MPI_Status status1;
-        //MPI_Request request1;
-        MPI_File_iwrite(matrix3,store_C[i],m[0]*m[2],MPI_FLOAT,&request);
+        MPI_File_iwrite(matrix3,matrix_loc3[i],m[0]*m[2],MPI_FLOAT,&request);
         MPI_Wait(&request,&status);
     }
     MPI_File_close(&matrix3);
@@ -338,7 +293,7 @@ int main(int argc,char** argv){
       
     }*/
 
-    if(rank==0){
+    /*if(rank==0){
         float fill1;
         std::fstream in2;
         in2.open(argv[3],std::ios::in|std::ios::binary);
@@ -346,7 +301,7 @@ int main(int argc,char** argv){
         in2.read((char*)&fill1,sizeof(float));
         in2.close();
         std::cout<<fill1<<'\n';
-    }
+    }*/
 
     MPI_Finalize();
     return 0;
