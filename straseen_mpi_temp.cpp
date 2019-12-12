@@ -213,7 +213,7 @@ int main(int argc,char** argv){
     
     int offset2=(gap[1]>dim_rank[1] ? (dim_rank[1]*(m1[1]+1)*n[2]):((gap[1]+dim_rank[1]*m1[1])*n[2]))+\
                 (gap[2]>(dim_rank[0]+dim_rank[1])%iter[0] ? (((dim_rank[0]+dim_rank[1])%iter[0])*(m1[2]+1)):\
-                (gap[2]+((dim_rank[0]+dim_rank[1])%dim_rank[0])*m1[2]));
+                (gap[2]+((dim_rank[0]+dim_rank[1])%iter[0])*m1[2]));
     MPI_File matrix2;
     MPI_File_open(MPI_COMM_WORLD,argv[2],MPI_MODE_RDONLY,MPI_INFO_NULL,&matrix2);
     for(int i=0;i<cont;i++){
@@ -257,8 +257,10 @@ int main(int argc,char** argv){
     for(int i=0;i<iteration[0]+(iteration[1]>0 ? 1:0);i++)
       matrix_loc3[i]=new float[m[0]*m[2]]();
     start=MPI_Wtime();
-    const int source1=((dim_rank[0]+iter[0]-1)%iter[0])*iter[1]+(dim_rank[1]+1)%iter[1];
-    const int dest1=((dim_rank[0]+iter[0]-iter[1]+1)%iter[0])*iter[1]+(dim_rank[1]+iter[1]-1)%iter[1];
+    const int source1=((dim_rank[0]+iter[0]-1+((dim_rank[1]%iter[1]==(iter[1]-1)) ?\
+                     iter[1]:0))%iter[0])*iter[1]+(dim_rank[1]+1)%iter[1];
+    const int dest1=((dim_rank[0]+1+((dim_rank[1]%iter[1]==0) ? (iter[0]-iter[1]):0))\
+                    %iter[0])*iter[1]+(dim_rank[1]+iter[1]-1)%iter[1];
     const int source2=(dim_rank[1]+1)%iter[1]+dim_rank[0]*iter[1];
     const int dest2=(dim_rank[1]+iter[1]-1)%iter[1]+dim_rank[0]*iter[1];
     const int source3=((dim_rank[0]+iter[1])%iter[0])*iter[1]+dim_rank[1];
@@ -312,44 +314,48 @@ int main(int argc,char** argv){
       const int source6=((dim_rank[0]+iter[1]-k*iteration[1])%iter[0])*iter[1]+dim_rank[1];
       const int dest6=((dim_rank[0]+iter[0]-iter[1]+k*iteration[1])%iter[0])*iter[1]+dim_rank[1];
       MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest6,2,source6,2,MPI_COMM_WORLD,&status);
-      float* temp=new float[((int)(m[0]/(int)(iter[1]/iteration[1]))+1)*m[2]];
-      if(iteration[1]>1){
-        const int source4=dim_rank[1]<iteration[1]? ((dim_rank[1]+1)%iteration[1]+\
-                        dim_rank[0]*iter[1]):(dim_rank[0]*iter[1]+dim_rank[1]);
-        const int dest4=dim_rank[1]<iteration[1]? (dim_rank[1]+iteration[1]-1)%iteration[1]+\
-                      dim_rank[0]*iter[1]:(dim_rank[0]*iter[1]+dim_rank[1]);
-        const int source5=dim_rank[1]<iteration[1]? ((dim_rank[1]+iteration[1]-1)%iteration[1]+((dim_rank[0]+\
+      float* temp;
+      const int source4=dim_rank[1]<iteration[1]? ((dim_rank[1]+1)%iteration[1]+\
+                        dim_rank[0]*iter[1]):rank;
+      const int dest4=dim_rank[1]<iteration[1]? (dim_rank[1]+iteration[1]-1)%iteration[1]+\
+                      dim_rank[0]*iter[1]:rank;
+      const int source5=dim_rank[1]<iteration[1]? ((dim_rank[1]+iteration[1]-1)%iteration[1]+((dim_rank[0]+\
                         iter[0]-1)%iter[0])*iter[1]):(((dim_rank[0]+1)%iter[0])*iter[1]+dim_rank[1]);
-        const int dest5=dim_rank[1]<iteration[1]? (dim_rank[1]+1)%iteration[1]+((dim_rank[0]+1)%iter[0])\
+      const int dest5=dim_rank[1]<iteration[1]? (dim_rank[1]+1)%iteration[1]+((dim_rank[0]+1)%iter[0])\
                       *iter[1]:(((dim_rank[0]+iter[0]-1)%iter[0])*iter[1]+dim_rank[1]);
-        for(int i=0;i<iteration[1]-1;i++){
-          int parts=(int)(iter[1]/iteration[1])+(((dim_rank[1]+iteration[1]-i)%iteration[1])<(iter[1]%iteration[1]) ? 1:0);
-          strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[iteration[0]],m[2],m[0],m[1],m[2],iter[2]);
-          MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest5,0,source5,0,MPI_COMM_WORLD,&status);
-          for(int j=0;j<parts-1;j++){
-            MPI_Isend(matrix_loc3,(int)(m[0]/part)+(m[0]%part>dim_rank[1]?1:0),MPI_FLOAT,dim_rank[0]*iter[1]+(dim_rank[1]+j*iteration[1])%iteration[1],0,MPI_COMM_WORLD,&request);
-            MPI_Irecv(temp,(int)(m[0]/part)+(m[0]%part>dim_rank[1]?1:0),MPI_FLOAT,dim_rank[0]*iter[1]+(dim_rank[1]+(j+1)*iteration[1]-1)%iteration[1],0,MPI_COMM_WORLD,&request);
-            MPI_Wait(&request,&status);
-            atomic_add(temp,,,,,);
-          }
-          MPI_Isend();
-          MPI_Irecv();
-          MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest4,1,source4,1,MPI_COMM_WORLD,&status);
-          if(dim_rank[1]>=iteration[1]){
-            memset(matrix_loc3[iteration[0]],0,sizeof(float)*m[0]*m[2]);
-          }
-        }
-      }
-      int parts=(int)(iter[1]/iteration[1])+(((dim_rank[1]+iteration[1]-1)%iteration[1])<iteration[1]?1:0);
-      strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[iteration[0]],m[2],m[0],m[1],m[2],iter[2]);
-      MPI_Isend();
-      MPI_Irecv();
-      delete temp;
+      for(int i=0;i<iteration[1];i++){
+        strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[iteration[0]],m[2],m[0],m[1],m[2],iter[2]);
+        MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest5,0,source5,0,MPI_COMM_WORLD,&status);
 
+        int color=dim_rank[1]<iteration[1] ? (dim_rank[0]*iter[1]+(dim_rank[1]-i+iteration[1])%iteration[1]):\
+                  (dim_rank[0]*iter[1]+dim_rank[1]%iteration[1]);
+        int row_rank,row_size;
+        MPI_Comm row_comm;
+        MPI_Comm_split(MPI_COMM_WORLD,color,rank,&row_comm);
+        MPI_Comm_rank(row_comm,&row_rank);
+        MPI_Comm_size(row_comm,&row_size);
+        temp=new float[((int)(m[0]/row_size)+(row_rank<m[0]%row_size ? 1:0))*m[2]];
+        for(int j=0;j<row_size-1;j++){
+          MPI_Isend(matrix_loc3[iteration[0]]+((row_size-k-1)*(int)(m[0]/(row_size))+(m[0]%row_size>(row_size-k-1)?
+                    (row_size-k-1):(m[0]%row_size)))*m[2],((int)(m[0]/row_size)+(m[0]%row_size>(row_size-k-1)?1:0))*m[2],\
+                    MPI_FLOAT,(row_size+row_rank-1)%row_size,0,row_comm,&request);
+          MPI_Wait(&request,&status);
+          MPI_Irecv(temp,((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,row_rank+1,0,row_comm,&request);
+          MPI_Wait(&request,&status);
+          atomic_add(temp,m[2],matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
+                    (m[0]%row_size)))*m[2],m[2],(int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0),m[2]);
+          MPI_Barrier(row_comm);
+        }
+        delete temp;
+        MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest4,1,source4,1,MPI_COMM_WORLD,&status);
+        MPI_Gather(matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+((m[0]%row_size)>row_rank?row_rank:(m[0]%row_size)))*m[2],\
+                  ((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+\
+                  ((m[0]%row_size)>row_rank?row_rank:(m[0]%row_size)))*m[2],((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,0,row_comm);
+        }
     }
     MPI_Barrier(MPI_COMM_WORLD);
     end=MPI_Wtime();
-    if(temp[0]==0 && temp[1]==0 && temp[2]==0){
+    /*if(temp[0]==0 && temp[1]==0 && temp[2]==0){
       MPI_File matrix3;
       MPI_File_open(MPI_COMM_WORLD,argv[3],MPI_MODE_WRONLY|MPI_MODE_CREATE,MPI_INFO_NULL,&matrix3);
       MPI_Datatype new_float3;
@@ -372,7 +378,7 @@ int main(int argc,char** argv){
     else{
       MPI_File matrix3;
       MPI_File_open(MPI_COMM_WORLD,argv[3],MPI_MODE_WRONLY|MPI_MODE_CREATE,MPI_INFO_NULL,&matrix3);
-      for(int i=0;i<iteration[0];i++){
+      for(int i=0;i<iteration[0]+(dim_rank[1]<iteration[1]?1:0);i++){
         int shift=((dim_rank[0]+dim_rank[1]+i*iter[1])%iter[0]);
         int col=m1[2]+(gap[2] > shift ? 1:0);
         for(int j=0;j<row;j++){
@@ -393,7 +399,7 @@ int main(int argc,char** argv){
       }
     }
     MPI_File_close(&matrix3);
-    }
+    }*/
   }
   else
   {
