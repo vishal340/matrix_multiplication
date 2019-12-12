@@ -334,43 +334,37 @@ int main(int argc,char** argv){
         MPI_Comm_split(MPI_COMM_WORLD,color,rank,&row_comm);
         MPI_Comm_rank(row_comm,&row_rank);
         MPI_Comm_size(row_comm,&row_size);
-        temp=new float[((int)(m[0]/row_size)+(row_rank<m[0]%row_size ? 1:0))*m[2]];
+        //std::cout<<row_rank<<'\t'<<row_size<<'\t'<<rank<<'\n';
+        temp=new float[((int)(m[0]/row_size)+(m[0]%row_size>row_rank ? 1:0))*m[2]];
         for(int j=0;j<row_size-1;j++){
-          MPI_Isend(matrix_loc3[iteration[0]]+((row_size-k-1)*(int)(m[0]/(row_size))+(m[0]%row_size>(row_size-k-1)?
-                    (row_size-k-1):(m[0]%row_size)))*m[2],((int)(m[0]/row_size)+(m[0]%row_size>(row_size-k-1)?1:0))*m[2],\
-                    MPI_FLOAT,(row_size+row_rank-1)%row_size,0,row_comm,&request);
-          MPI_Wait(&request,&status);
-          MPI_Irecv(temp,((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,row_rank+1,0,row_comm,&request);
-          MPI_Wait(&request,&status);
+          MPI_Sendrecv(matrix_loc3[iteration[0]]+(((row_size+row_rank-j-1)%row_size)*(int)(m[0]/(row_size))+\
+                  (m[0]%row_size>((row_size+row_rank-j-1)%row_size)?((row_size+row_rank-j-1)%row_size):(m[0]%row_size)))*m[2],\
+                  ((int)(m[0]/row_size)+(m[0]%row_size>((row_size+row_rank-j-1)%row_size)?1:0))*m[2],\
+                    MPI_FLOAT,(row_size+row_rank-j-1)%row_size,0,temp,((int)(m[0]/row_size)+(m[0]%row_size>\
+                    row_rank?1:0))*m[2],MPI_FLOAT,(row_rank+1)%row_size,0,row_comm,&status);
           atomic_add(temp,m[2],matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
                     (m[0]%row_size)))*m[2],m[2],(int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0),m[2]);
           MPI_Barrier(row_comm);
         }
         delete temp;
-        MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest4,1,source4,1,MPI_COMM_WORLD,&status);
         MPI_Gather(matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+((m[0]%row_size)>row_rank?row_rank:(m[0]%row_size)))*m[2],\
-                  ((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+\
-                  ((m[0]%row_size)>row_rank?row_rank:(m[0]%row_size)))*m[2],((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,0,row_comm);
+              ((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+\
+              ((m[0]%row_size)>row_rank?row_rank:(m[0]%row_size)))*m[2],((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,0,row_comm);
+        MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest4,1,source4,1,MPI_COMM_WORLD,&status);
         }
     }
     MPI_Barrier(MPI_COMM_WORLD);
     end=MPI_Wtime();
-    /*if(temp[0]==0 && temp[1]==0 && temp[2]==0){
+    if(temp[0]==0 && temp[1]==0 && temp[2]==0){
       MPI_File matrix3;
       MPI_File_open(MPI_COMM_WORLD,argv[3],MPI_MODE_WRONLY|MPI_MODE_CREATE,MPI_INFO_NULL,&matrix3);
       MPI_Datatype new_float3;
       MPI_Type_vector(m[0],m[2],n[2],MPI_FLOAT,&new_float3);
       MPI_Type_commit(&new_float3);
-      for(int i=0;i<iteration[0];i++){
+      for(int i=0;i<iteration[0]+(dim_rank[1]<iteration[1]?1:0);i++){
         MPI_File_set_view(matrix3,2*sizeof(int)+sizeof(float)*(((dim_rank[0]+dim_rank[1]+i*iter[1])%iter[0])\
                           *m[2]+dim_rank[1]*n[2]*m[0]),MPI_FLOAT,new_float3,"native",MPI_INFO_NULL);
         MPI_File_iwrite(matrix3,matrix_loc3[i],m[0]*m[2],MPI_FLOAT,&request);
-        MPI_Wait(&request,&status);
-      }
-      if(dim_rank[1]<iteration[1]){
-        MPI_File_set_view(matrix3,2*sizeof(int)+sizeof(float)*(((dim_rank[0]+dim_rank[1]+iteration[0]*iter[1])%iter[0])\
-                          *m[2]+dim_rank[1]*n[2]*m[0]),MPI_FLOAT,new_float3,"native",MPI_INFO_NULL);
-        MPI_File_iwrite(matrix3,matrix_loc3[iteration[0]],m[0]*m[2],MPI_FLOAT,&request);
         MPI_Wait(&request,&status);
       }
       MPI_File_close(&matrix3);
@@ -383,23 +377,13 @@ int main(int argc,char** argv){
         int col=m1[2]+(gap[2] > shift ? 1:0);
         for(int j=0;j<row;j++){
           MPI_File_iwrite_at(matrix3,2*sizeof(int)+sizeof(float)*((gap[2]>shift?shift*(m1[2]+1):(gap[2]+shift*m1[2]))+\
-                            (gap[1]>dim_rank[1]? dim_rank[1]*(m1[1]+1)*n[2]:(gap[1]+dim_rank[1])*n[2])),
+                            (gap[0]>dim_rank[1]? dim_rank[1]*(m1[0]+1)*n[2]:(gap[0]+dim_rank[1])*n[2])),
                             matrix_loc3[i]+j*m[2],col,MPI_FLOAT,&request);
           MPI_Wait(&request,&status);
+        }
       }
+      MPI_File_close(&matrix3);
     }
-    if(dim_rank[1]<iteration[1]){
-      int shift=((dim_rank[0]+dim_rank[1]+iteration[0]*iter[1])%iter[0]);
-      int col=m1[2]+(gap[2] > shift ? 1:0);
-      for(int j=0;j<row;j++){
-        MPI_File_iwrite_at(matrix3,2*sizeof(int)+sizeof(float)*((gap[2]>shift?shift*(m1[2]+1):(gap[2]+shift*m1[2]))+\
-                          (gap[1]>dim_rank[1]? dim_rank[1]*(m1[1]+1)*n[2]:(gap[1]+dim_rank[1])*n[2])),
-                          matrix_loc3[iteration[0]]+j*m[2],col,MPI_FLOAT,&request);
-        MPI_Wait(&request,&status);
-      }
-    }
-    MPI_File_close(&matrix3);
-    }*/
   }
   else
   {
@@ -447,10 +431,9 @@ int main(int argc,char** argv){
     MPI_File_close(&matrix3);
     }
   }
-  
-  std::cout<<matrix_loc3[0][0]<<'\t'<<matrix_loc3[0][1]<<'\t'<<matrix_loc3[0][2]<<'\t';
   if(rank==0){
     std::cout<<"Time taken: "<<end-start<<'\n';
+    std::cout<<matrix_loc3[0][0]<<'\t'<<matrix_loc3[0][1]<<'\t'<<matrix_loc3[0][2]<<'\t';
   }
   delete matrix_loc1,matrix_loc2,matrix_loc3;
   MPI_Finalize();
