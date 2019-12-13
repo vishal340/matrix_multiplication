@@ -437,7 +437,6 @@ int main(int argc,char** argv){
   }
   if(rank==0){
     std::cout<<"Time taken: "<<end-start<<'\n';
-    //std::cout<<matrix_loc3[0][340*340-3]<<'\t'<<matrix_loc3[0][340*340-2]<<'\t'<<matrix_loc3[0][340*340-1]<<'\t';
   }
   delete matrix_loc1,matrix_loc2,matrix_loc3;
   MPI_Finalize();
