@@ -259,26 +259,37 @@ int main(int argc,char** argv){
     for(int i=0;i<iteration[0]+(iteration[1]>0 ? 1:0);i++)
       matrix_loc3[i]=new float[m[0]*m[2]]();
     start=MPI_Wtime();
-    const int source2=((dim_rank[0]+iter[0]-1+(dim_rank[1]%iter[1]==(iter[1]-1) ?\
+    const int source2=((dim_rank[0]+iter[0]-1+(dim_rank[1]==(iter[1]-1) ?\
                      iter[1]:0))%iter[0])*iter[1]+(dim_rank[1]+1)%iter[1];
-    const int dest2=((dim_rank[0]+1+((dim_rank[1]%iter[1]==0) ? (iter[0]-iter[1]):0))\
+    const int dest2=((dim_rank[0]+1+((dim_rank[1]==0) ? (iter[0]-iter[1]):0))\
                     %iter[0])*iter[1]+(dim_rank[1]+iter[1]-1)%iter[1];
     const int source1=(dim_rank[1]+1)%iter[1]+dim_rank[0]*iter[1];
     const int dest1=(dim_rank[1]+iter[1]-1)%iter[1]+dim_rank[0]*iter[1];
     const int source3=((dim_rank[0]+iter[1])%iter[0])*iter[1]+dim_rank[1];
     const int dest3=((dim_rank[0]+iter[0]-iter[1])%iter[0])*iter[1]+dim_rank[1];
-    for(int i=0;i<(iteration[0]-1);i++){
-      for(int j=0;j<iter[1];j++){
+    for(int i=0;i<(iteration[0]-1);i+=2){
+      for(int j=0;j<(iter[1]-1);j++){
         strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[i],m[2],m[0],m[1],m[2],iter[2]);
         MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest2,0,source2,0,MPI_COMM_WORLD,&status);
         MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest1,1,source1,1,MPI_COMM_WORLD,&status);
       }
+      strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[i],m[2],m[0],m[1],m[2],iter[2]);
+      MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest3,2,source3,2,MPI_COMM_WORLD,&status);
+      for(int j=0;j<(iter[1]-1);j++){
+        strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[i+1],m[2],m[0],m[1],m[2],iter[2]);
+        MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,source2,0,dest2,0,MPI_COMM_WORLD,&status);
+        MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,source1,1,dest1,1,MPI_COMM_WORLD,&status);
+      }
+      strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[i+1],m[2],m[0],m[1],m[2],iter[2]);
       MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest3,2,source3,2,MPI_COMM_WORLD,&status);
     }
-    for(int j=0;j<iter[1];j++){
+    if(iteration[0]%2==1){
+      for(int j=0;j<iter[1]-1;j++){
+        strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[iteration[0]-1],m[2],m[0],m[1],m[2],iter[2]);
+        MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest2,0,source2,0,MPI_COMM_WORLD,&status);
+        MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest1,1,source1,1,MPI_COMM_WORLD,&status);
+      }
       strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[iteration[0]-1],m[2],m[0],m[1],m[2],iter[2]);
-      MPI_Sendrecv_replace(matrix_loc2,m[1]*m[2],MPI_FLOAT,dest2,0,source2,0,MPI_COMM_WORLD,&status);
-      MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest1,1,source1,1,MPI_COMM_WORLD,&status);
     }
     if(iteration[1]>0){
       int k=0;
@@ -331,6 +342,7 @@ int main(int argc,char** argv){
           }
         MPI_Sendrecv_replace(matrix_loc1,m[0]*m[1],MPI_FLOAT,dest4,1,source4,1,MPI_COMM_WORLD,&status);
         MPI_Wait(&request,&status);
+        MPI_Comm_free(&row_comm);
         }
         strassen(matrix_loc1,m[1],matrix_loc2,m[2],matrix_loc3[iteration[0]],m[2],m[0],m[1],m[2],iter[2]);
         const int color=dim_rank[1]<iteration[1] ? (dim_rank[0]*iter[1]+(dim_rank[1]+1)%iteration[1]):\
@@ -355,7 +367,7 @@ int main(int argc,char** argv){
         MPI_Gather(matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+((m[0]%row_size)>row_rank?row_rank:(m[0]%row_size)))*m[2],\
               ((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+\
               ((m[0]%row_size)>row_rank?row_rank:(m[0]%row_size)))*m[2],temp_size*m[2],MPI_FLOAT,0,row_comm);
-
+        MPI_Comm_free(&row_comm);
     }
     MPI_Barrier(MPI_COMM_WORLD);
     end=MPI_Wtime();
