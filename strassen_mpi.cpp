@@ -11,36 +11,31 @@
 //But you can change it to nonzero C aswell
 
 template<typename T>
-void add(T* A,int jump,T* B,int jump1,T* C,int jump2,int n1,int n2)
-{
+void add(const T* const A,int jump,const T* const B,int jump1,T* C,int jump2,int n1,int n2){
 for(int i=0;i<n1;i++)
   for(int j=0;j<n2;j++)
     C[i*jump2+j]=A[i*jump+j]+B[i*jump1+j];
 }
 template<typename T>
-void atomic_add(T* A,int jump,T* B,int jump1,int n1,int n2)
-{
+void atomic_add(const T* const A,int jump,T* B,int jump1,int n1,int n2){
   for(int i=0;i<n1;i++)
     for(int j=0;j<n2;j++)
       B[i*jump1+j]+=A[i*jump+j];
 }
 template<typename T>
-void subtract(T* A,int jump,T* B,int jump1,T* C,int jump2,int n1,int n2)
-{
+void subtract(const T* const A,int jump,const T* const B,int jump1,T* C,int jump2,int n1,int n2){
   for(int i=0;i<n1;i++)
     for(int j=0;j<n2;j++)
       C[i*jump2+j]=A[i*jump+j]-B[i*jump1+j];
 }
 template<typename T>
-void atomic_subtract(T* A,int jump,T* B,int jump1,int n1,int n2)
-{
+void atomic_subtract(const T* const A,int jump,T* B,int jump1,int n1,int n2){
   for(int i=0;i<n1;i++)
     for(int j=0;j<n2;j++)
       B[i*jump1+j]-=A[i*jump+j];
 }
 template<typename T>
-void multiply(T* A,int jump,T* B,int jump1,T* C,int jump2,int n1,int n2,int n3)
-{
+void multiply(const T* const A,int jump,const T* const B,int jump1,T* C,int jump2,int n1,int n2,int n3){
   for(int j=0;j<n1;j+=2){
     for(int i=0;i<n2;i+=2){
       for(int k=0;k<n3;k++){
@@ -53,61 +48,66 @@ void multiply(T* A,int jump,T* B,int jump1,T* C,int jump2,int n1,int n2,int n3)
   }
 }
 template<typename T>
-void strassen(T* A,const int jump,T* B,const int jump1, \
-              T* C,const int jump2,const int n1,const int n2,const int n3,int iter)
-{
+void C_adjust1(T* C,int jump,int n1,int n2){
+  for(int i=0;i<n1;i++){
+    for(int j=0;j<n2;j++){
+      C[i*jump+j]+=(C[i*jump+j+n2]-C[(i+n1)*jump+j]);
+      C[(i+n1)*jump+j+n2]-=C[i*jump+j];
+    }
+  }
+}
+template<typename T>
+void C_adjust2(T* C,int jump,int n1,int n2){
+  for(int i=0;i<n1;i++){
+    for(int j=0;j<n2;j++){
+      C[(i+n1)*jump+j+n2]+=(C[i*jump+j]-C[(i+n1)*jump+j]+C[i*jump+j+n2]);
+    }
+  }
+}
+
+template<typename T>
+void strassen(T* const A,const int jump,T* const B,const int jump1, \
+              T* C,const int jump2,const int n1,const int n2,const int n3,int iter){
   if(iter==1)
     multiply(A,jump,B,jump1,C,jump2,n1,n2,n3);
-  else
-  {
+  else{
     iter/=2;
     int m1=n1/2,m2=n2/2,m3=n3/2;
     T* temp1=new T[m1*m2];
     float* temp2=new T[m2*m3];
-    float* temp3=new T[m1*m3]();
 
+    C_adjust1(C,jump2,m1,m3);    //C11+=C12-C21
+                                //C22-=C11
+     //M5
+    add(A,jump,A+m2,jump,temp1,m2,m1,m2);  //temp1=A11+A12
+    strassen(temp1,m2,B+jump1*m2+m3,jump1,C+m3,jump2,m1,m2,m3,iter);  //C12+=temp1*B22
+    atomic_subtract(C+m3,jump2,C,jump2,m1,m3);  //C11-=C12
+    //M3
+    subtract(B+m3,jump1,B+m3+jump1*m2,jump1,temp2,m3,m2,m3);  //temp2=B12-B22
+    strassen(A,jump,temp2,m3,C+m3,jump2,m1,m2,m3,iter);  //C12+=A11*temp2
+    //M4
+    subtract(B+jump1*m2,jump1,B,jump1,temp2,m3,m2,m3);  //temp2=B21-B11
+    strassen(A+jump*m1+m2,jump,temp2,m3,C+jump2*m1,jump2,m1,m2,m3,iter);  //C21+=A22*temp2
+    atomic_add(C+jump2*m1,jump2,C,jump2,m1,m3);   //C11+=C21
+    //M2
+    add(A+jump*m1,jump,A+jump*m1+m2,jump,temp1,m2,m1,m2);  //temp1=A21+A22
+    strassen(temp1,m2,B,jump1,C+jump2*m1,jump2,m1,m2,m3,iter);  //C21+=temp1*B11
+    //M1
     add(A,jump,A+jump*m1+m2,jump,temp1,m2,m1,m2);   //temp1=A11+A22
     add(B,jump1,B+jump1*m2+m3,jump1,temp2,m3,m2,m3);   //temp2=B11+B22
-    strassen(temp1,m2,temp2,m3,temp3,m3,m1,m2,m3,iter);   //temp3=temp1*temp2
-    atomic_add(temp3,m3,C+jump2*m1+m3,jump2,m1,m3);  //C22+=temp3
-    atomic_add(temp3,m3,C,jump2,m1,m3);  //C11+=temp3
-    memset(temp3,0,sizeof(T)*m1*m3);
+    strassen(temp1,m2,temp2,m3,C,jump2,m1,m2,m3,iter);   //C11+=temp1*temp2
 
-    add(A+jump*m1,jump,A+jump*m1+m2,jump,temp1,m2,m1,m2);  //temp1=A21+A22
-    strassen(temp1,m2,B,jump1,temp3,m3,m1,m2,m3,iter);  //temp3=temp1*B11
-    atomic_add(temp3,m3,C+jump2*m1,jump2,m1,m3);   //C21+=temp3
-    atomic_subtract(temp3,m3,C+jump2*m1+m3,jump2,m1,m3);  //C22-=temp3
-    memset(temp3,0,sizeof(T)*m1*m3);
-
-    add(A,jump,A+m2,jump,temp1,m2,m1,m2);  //temp1=A11+A12
-    strassen(temp1,m2,B+jump1*m2+m3,jump1,temp3,m3,m1,m2,m3,iter);  //temp3=temp1*B22
-    atomic_add(temp3,m3,C+m3,jump2,m1,m3);    //C12+=temp3
-    atomic_subtract(temp3,m3,C,jump2,m1,m3);  //C11-=temp3
-    memset(temp3,0,sizeof(T)*m1*m3);
-
+    C_adjust2(C,jump2,m1,m3);     //C22+=C11-C21+C12
+    
+    //M6
     subtract(A +jump*m1,jump,A ,jump,temp1,m2,m1,m2);   //temp1=A21-A11
     add(B,jump1,B+m3,jump1,temp2,m3,m2,m3);    //temp2=B11+B12
-    strassen(temp1,m2,temp2,m3,temp3,m3,m1,m2,m3,iter);   //temp3=temp1*temp2
-    atomic_add(temp3,m3,C+jump2*m1+m3,jump2,m1,m3);  //C22+=temp3
-    memset(temp3,0,sizeof(T)*m1*m3);
-
+    strassen(temp1,m2,temp2,m3,C+jump2*m1+m3,jump2,m1,m2,m3,iter);  //C22+=M6
+    //M7
     subtract(A+m2,jump,A+jump*m1+m2,jump,temp1,m2,m1,m2);   //temp1=A12-A22
     add(B+jump1*m2,jump1,B+jump1*m2+m3,jump1,temp2,m3,m2,m3);   //temp2=B21+B22
-    strassen(temp1,m2,temp2,m3,temp3,m3,m1,m2,m3,iter);  //temp3=temp1*temp2
-    atomic_add(temp3,m3,C,jump2,m1,m3);   //C11+=temp3
-    memset(temp3,0,sizeof(T)*m1*m3);
-
-    subtract(B+m3,jump1,B+m3+jump1*m2,jump1,temp2,m3,m2,m3);  //temp2=B12-B22
-    strassen(A,jump,temp2,m3,temp3,m3,m1,m2,m3,iter);  //temp3=A11*temp2
-    atomic_add(temp3,m3,C+m3,jump2,m1,m3);  //C12+=temp3
-    atomic_add(temp3,m3,C+jump2*m1+m3,jump2,m1,m3);  //C22+=temp3
-    memset(temp3,0,sizeof(T)*m1*m3);
-
-    subtract(B+jump1*m2,jump1,B,jump1,temp2,m3,m2,m3);  //temp2=B21-B11
-    strassen(A+jump*m1+m2,jump,temp2,m3,temp3,m3,m1,m2,m3,iter);  //temp3=A22*temp2
-    atomic_add(temp3,m3,C+jump2*m1,jump2,m1,m3);  //C21+=temp3
-    atomic_add(temp3,m3,C,jump2,m1,m3);  //C11+=temp3
-    delete temp1,temp2,temp3;
+    strassen(temp1,m2,temp2,m3,C,jump2,m1,m2,m3,iter);  //C11+=M7
+    delete temp1,temp2;
   }
 }
 int nearest_ideal(int &n,int &temp,const int temp1,const int threshold)
@@ -320,18 +320,18 @@ int main(int argc,char** argv){
         MPI_Comm_rank(row_comm,&row_rank);
         MPI_Comm_size(row_comm,&row_size);
         const int temp_size=(int)(m[0]/row_size)+(m[0]%row_size>row_rank ? 1:0);
-        float* temp=new float[temp_size*m[2]];
+        float* temp_matrix=new float[temp_size*m[2]];
         for(int j=0;j<row_size-1;j++){
           const int send_rank=(row_size+row_rank-j-1)%row_size;
           MPI_Sendrecv(matrix_loc3[iteration[0]]+(send_rank*(int)(m[0]/(row_size))+\
                   (m[0]%row_size>send_rank?send_rank:(m[0]%row_size)))*m[2],\
                   ((int)(m[0]/row_size)+(m[0]%row_size>send_rank?1:0))*m[2],\
-                  MPI_FLOAT,send_rank,0,temp,temp_size*m[2],MPI_FLOAT,(row_rank+j+1)%row_size,0,row_comm,&status);
-          atomic_add(temp,m[2],matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
+                  MPI_FLOAT,send_rank,0,temp_matrix,temp_size*m[2],MPI_FLOAT,(row_rank+j+1)%row_size,0,row_comm,&status);
+          atomic_add(temp_matrix,m[2],matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
                     (m[0]%row_size)))*m[2],m[2],temp_size,m[2]);
           MPI_Barrier(row_comm);
         }
-        delete temp;
+        delete temp_matrix;
         MPI_Igather(matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+((m[0]%row_size)>row_rank?row_rank:\
                   (m[0]%row_size)))*m[2],((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,\
                   matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+((m[0]%row_size)>row_rank?row_rank:\
@@ -353,17 +353,17 @@ int main(int argc,char** argv){
         MPI_Comm_rank(row_comm,&row_rank);
         MPI_Comm_size(row_comm,&row_size);
         const int temp_size=(int)(m[0]/row_size)+(m[0]%row_size>row_rank ? 1:0);
-        float* temp=new float[temp_size*m[2]];
+        float* temp_matrix=new float[temp_size*m[2]];
         for(int j=0;j<row_size-1;j++){
           MPI_Sendrecv(matrix_loc3[iteration[0]]+(((row_size+row_rank-j-1)%row_size)*(int)(m[0]/row_size)+\
                   (m[0]%row_size>((row_size+row_rank-j-1)%row_size)?((row_size+row_rank-j-1)%row_size):(m[0]%row_size)))*m[2],\
                   ((int)(m[0]/row_size)+(m[0]%row_size>((row_size+row_rank-j-1)%row_size)?1:0))*m[2],\
-                    MPI_FLOAT,(row_size+row_rank-j-1)%row_size,0,temp,temp_size*m[2],MPI_FLOAT,(row_rank+j+1)%row_size,0,row_comm,&status);
-          atomic_add(temp,m[2],matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
+                    MPI_FLOAT,(row_size+row_rank-j-1)%row_size,0,temp_matrix,temp_size*m[2],MPI_FLOAT,(row_rank+j+1)%row_size,0,row_comm,&status);
+          atomic_add(temp_matrix,m[2],matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
                     (m[0]%row_size)))*m[2],m[2],temp_size,m[2]);
           MPI_Barrier(row_comm);
         }
-        delete temp;
+        delete temp_matrix;
         MPI_Gather(matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+((m[0]%row_size)>row_rank?row_rank:(m[0]%row_size)))*m[2],\
               ((int)(m[0]/row_size)+(m[0]%row_size>row_rank?1:0))*m[2],MPI_FLOAT,matrix_loc3[iteration[0]]+(row_rank*(int)(m[0]/row_size)+\
               ((m[0]%row_size)>row_rank?row_rank:(m[0]%row_size)))*m[2],temp_size*m[2],MPI_FLOAT,0,row_comm);
