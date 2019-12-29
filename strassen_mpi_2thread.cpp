@@ -173,15 +173,17 @@ int main(int argc,char** argv){
         }
       }
     }
-    const int threshold=(int)std::pow(2,(int)(-2-std::log2((double)(8*iter[1])/(double)n[1]+\
-                        (double)(5*iter[0])/(double)n[0]+(double)(5*iter[0])/(double)n[2])));
+    int threshold=(int)std::pow(2,(int)(-2-std::log2((double)(8*iter[1])/(double)n[1]+(double)(5*iter[0])/(double)(n[0]+n[2]))));
+    if(threshold<1){
+      threshold=1;
+    }
     //std::cout<<"threshold: "<<threshold<<'\n';
-    iter[2]=nearest_ideal(n[0],temp[0],iter[0],(n[0]/(iter[0]*threshold)));
+    iter[2]=nearest_ideal(n[0],temp[0],iter[0],(n[0]/(4*iter[0]*threshold)));
     if(iter[2]>1){
       iter[2]>>=1;
     }
-    iter[2]=std::min(iter[2],nearest_ideal(n[2],temp[2],iter[0],(n[2]/(iter[0]*threshold))));
-    iter[2]=std::min(iter[2],nearest_ideal(n[1],temp[1],iter[1],(n[1]/(iter[1]*threshold))));
+    iter[2]=std::min(iter[2],nearest_ideal(n[2],temp[2],iter[0],(n[2]/(4*iter[0]*threshold))));
+    iter[2]=std::min(iter[2],nearest_ideal(n[1],temp[1],iter[1],(n[1]/(4*iter[1]*threshold))));
     //std::cout<<"iterations: "<<iter[2]<<'\n';
   }
   MPI_Bcast(n,3,MPI_INT,0,MPI_COMM_WORLD);
@@ -402,18 +404,27 @@ int main(int argc,char** argv){
         }
         memcpy(&temp_matrix[0],&matrix_loc3[(iteration[0]*m[0]+row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
                     (m[0]%row_size)))*m[2]],sizeof(float)*temp_size*m[2]);
-        int* recvcnts=new int[row_size];
-        int* disp=new int[row_size];
-        for(int j=0;j<row_size;j++){
-          recvcnts[j]=((int)(m[0]/row_size)+((m[0]%row_size)>j?1:0))*m[2];
-          disp[j]=(j*(int)(m[0]/row_size)+((m[0]%row_size)>j?j:(m[0]%row_size)))*m[2];
+        int* recvcnts=NULL;
+        int* disp=NULL;
+        if(row_rank==0){
+          recvcnts=new int[row_size];
+          disp=new int[row_size];
+          for(int j=0;j<row_size;j++){
+            recvcnts[j]=((int)(m[0]/row_size)+((m[0]%row_size)>j?1:0))*m[2];
+            disp[j]=(j*(int)(m[0]/row_size)+((m[0]%row_size)>j?j:(m[0]%row_size)))*m[2];
+          }
         }
+        MPI_Barrier(row_comm);
         MPI_Igatherv(&temp_matrix[0],temp_size*m[2],MPI_FLOAT,\
                   &matrix_loc3[iteration[0]*m[0]*m[2]],&recvcnts[0],&disp[0],MPI_FLOAT,0,row_comm,&request);
         MPI_Wait(&request,&status);
         if(row_rank!=0){
-            memset(&matrix_loc3[iteration[0]][0],0,sizeof(float)*m[0]*m[2]);
+            memset(&matrix_loc3[iteration[0]*m[0]*m[2]],0,sizeof(float)*m[0]*m[2]);
           }
+        for(int k=0;k<m[0];k++){
+          MPI_Sendrecv_replace(&matrix_loc1[k*m[1]],m[1],MPI_FLOAT,dest4,1,source4,1,MPI_COMM_WORLD,&status);
+        }
+        delete[] recvcnts,disp;
         MPI_Comm_free(&row_comm);
         }
         thread first7(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
@@ -440,16 +451,21 @@ int main(int argc,char** argv){
                     (m[0]%row_size)))*m[2]],m[2],temp_size,m[2]);
           MPI_Barrier(row_comm);
         }
-        memcpy(&temp_matrix[0],&matrix_loc3[(iteration[0]*m[0]+row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
-                    (m[0]%row_size)))*m[2]],sizeof(float)*temp_size*m[2]);
-        int* recvcnts=new int[row_size];
-        int* disp=new int[row_size];
-        for(int j=0;j<row_size;j++){
-          recvcnts[j]=((int)(m[0]/row_size)+((m[0]%row_size)>j?1:0))*m[2];
-          disp[j]=(j*(int)(m[0]/row_size)+((m[0]%row_size)>j?j:(m[0]%row_size)))*m[2];
+        memcpy(&temp_matrix[0],&matrix_loc3[(iteration[0]*m[0]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
+                    (m[0]%row_size))))*m[2]],sizeof(float)*temp_size*m[2]);
+        int* recvcnts=NULL;
+        int* disp=NULL;
+        if(row_rank==0){
+          recvcnts=new int[row_size];
+          disp=new int[row_size];
+          for(int j=0;j<row_size;j++){
+            recvcnts[j]=((int)(m[0]/row_size)+((m[0]%row_size)>j?1:0))*m[2];
+            disp[j]=(j*(int)(m[0]/row_size)+((m[0]%row_size)>j?j:(m[0]%row_size)))*m[2];
+          }
         }
         MPI_Gatherv(&temp_matrix[0],temp_size*m[2],MPI_FLOAT,\
-                  &matrix_loc3[iteration[0]*m[0]*m[2]],&recvcnts[0],&disp[0],MPI_FLOAT,0,row_comm);
+                  &matrix_loc3[iteration[0]*m[0]*m[2]],recvcnts,disp,MPI_FLOAT,0,row_comm);
+        delete[] recvcnts,disp;
         MPI_Comm_free(&row_comm);
     }
     MPI_Barrier(MPI_COMM_WORLD);
