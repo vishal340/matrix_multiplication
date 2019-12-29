@@ -2,10 +2,12 @@
 #include<fstream>
 #include<cmath>
 #include<memory>
-#include<cstring>
+#include<thread>
 #include<mpi.h>
+#include<cstring>
 
 using std::unique_ptr;
+using std::thread;
 
 //Please provide number of processor 
 //some SMALL multiple of sqaure for better result
@@ -113,7 +115,7 @@ void strassen(const T* const A,const int jump,const T* const B,const int jump1, 
     strassen(&temp1[0],m2,&temp2[0],m3,&C[0],jump2,m1,m2,m3,iter);  //C11+=M7
   }
 }
-int nearest_ideal(int &n,int &temp,const int temp1,const int threshold)
+int nearest_ideal(int &n,int &temp,const int temp1,int threshold)
 {
   int t=(temp1-n%temp1)%temp1;
   int pow=1;
@@ -137,14 +139,15 @@ int nearest_ideal(int &n,int &temp,const int temp1,const int threshold)
   return pow;
 }
 
-int main(int argc,char** argv){
-  MPI_Init(&argc,&argv);
-  int rank,NUM_processors;
+int main(int argc,char** argv){   
+  int provided;
+  MPI_Init_thread(&argc,&argv,MPI_THREAD_FUNNELED,&provided);
+  int rank,NUM_processors,flag;
   MPI_Comm_rank(MPI_COMM_WORLD,&rank);
   MPI_Comm_size(MPI_COMM_WORLD,&NUM_processors);
   int iter[3]={NUM_processors,1,1};
   int temp[3]={0,0,0};
-  int n[3]; //the three dimensions whole file and per processor respectively
+  int n[3];      //the three dimensions whole file and per processor respectively
   int row,cont;  //This is useful dimension when we have to append zeros
   if(rank==0){
     std::fstream in;
@@ -159,22 +162,28 @@ int main(int argc,char** argv){
     in1.seekg(sizeof(int),std::ios::beg);
     in1.read((char*)&n[2],sizeof(int));
     in1.close();
-    float quotient=std::sqrt((n[1]*n[1])/(n[0]*n[2]));
-    float difference=NUM_processors*quotient-1;
+    float ratio=std::sqrt((n[1]*n[1])/(n[0]*n[2]));
+    float difference=NUM_processors*ratio-1;
     iter[0]=NUM_processors,iter[1]=1;
     for(int i=2;i<=(int)(std::sqrt(NUM_processors));i++){
       if(NUM_processors%i == 0){
-        if(std::fabs((NUM_processors/i)*quotient-i)<difference){
+        if(std::fabs((NUM_processors/i)*ratio-i)<difference){
           iter[0]=(int)(NUM_processors/i);
           iter[1]=i;
         }
       }
     }
-    const int threshold=(int)std::pow(2,(int)(-2-std::log2((double)(8*iter[1])/(double)n[1]+(double)(5*iter[0])/(double)n[0]+(double)(5*iter[0])/(double)n[2])));
+    int threshold=(int)std::pow(2,(int)(-2-std::log2((double)(8*iter[1])/(double)n[1]+(double)(5*iter[0])/(double)(n[0]+n[2]))));
+    if(threshold<1){
+      threshold=1;
+    }
     //std::cout<<"threshold: "<<threshold<<'\n';
-    iter[2]=nearest_ideal(n[0],temp[0],iter[0],(n[0]/(iter[0]*threshold)));
-    iter[2]=std::min(iter[2],nearest_ideal(n[2],temp[2],iter[0],(n[2]/(iter[0]*threshold))));
-    iter[2]=std::min(iter[2],nearest_ideal(n[1],temp[1],iter[1],(n[1]/(iter[1]*threshold))));
+    iter[2]=nearest_ideal(n[0],temp[0],iter[0],(n[0]/(4*iter[0]*threshold)));
+    iter[2]=std::min(iter[2],nearest_ideal(n[2],temp[2],iter[0],(n[2]/(4*iter[0]*threshold))));
+    if(iter[2]>1){
+      iter[2]>>=1;
+    }
+    iter[2]=std::min(iter[2],nearest_ideal(n[1],temp[1],iter[1],(n[1]/(4*iter[1]*threshold))));
     //std::cout<<"iterations: "<<iter[2]<<'\n';
   }
   MPI_Bcast(n,3,MPI_INT,0,MPI_COMM_WORLD);
@@ -187,6 +196,9 @@ int main(int argc,char** argv){
   const int gap[3]={n[0]%iter[0],n[1]%iter[1],n[2]%iter[0]};
   const int m1[3]={(int)(n[0]/iter[0]),(int)(n[1]/iter[1]),(int)(n[2]/iter[0])};
 
+  int temp_m0=m[0]>>1;
+  int temp_m2=m[2]>>1;
+
   /*if(rank==(NUM_processors-1)){
     std::fstream out;
     out.open(argv[3],std::ios::out|std::ios::binary);
@@ -197,6 +209,7 @@ int main(int argc,char** argv){
     out.write((char*)&fill,sizeof(int));
     out.close();
   }*/
+
   MPI_Status status;
   MPI_Request request;
 
@@ -252,13 +265,15 @@ int main(int argc,char** argv){
     MPI_File_close(&matrix2);
   }
 
-  unique_ptr<float[]> matrix_loc3;      //matrix C for local processor
+  unique_ptr<unique_ptr<float[]>[]> matrix_loc3;      //matrix C for local processor
   double start,end;
 
   MPI_Barrier(MPI_COMM_WORLD);
   if(iter[1]>1){
     const int iteration[2]={(int)(iter[0]/iter[1]),iter[0]%iter[1]};
-    matrix_loc3=std::make_unique<float[]>((iteration[0]+(iteration[1]>0 ? 1:0))*m[0]*m[2]);
+    matrix_loc3=std::make_unique<unique_ptr<float[]>[]>(iteration[0]+(iteration[1]>0 ? 1:0));
+    for(int i=0;i<iteration[0]+(iteration[1]>0 ? 1:0);i++)
+      matrix_loc3[i]=std::make_unique<float[]>(m[0]*m[2]);
     start=MPI_Wtime();
     const int source2=((dim_rank[0]+iter[0]-1+(dim_rank[1]==(iter[1]-1) ?\
                      iter[1]:0))%iter[0])*iter[1]+(dim_rank[1]+1)%iter[1];
@@ -269,9 +284,19 @@ int main(int argc,char** argv){
     const int source3=((dim_rank[0]+iter[1])%iter[0])*iter[1]+dim_rank[1];
     const int dest3=((dim_rank[0]+iter[0]-iter[1])%iter[0])*iter[1]+dim_rank[1];
     for(int i=0;i<(iteration[0]-1);i+=2){
-      int i1=i*m[0]*m[2];
       for(int j=0;j<(iter[1]-1);j++){
-        strassen(&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],&matrix_loc3[i1],m[2],m[0],m[1],m[2],iter[2]);
+        thread first(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[i][0],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread second(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[i][temp_m0*m[2]+temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread third(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[i][temp_m0*m[2]],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread forth(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[i][temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        first.join();
+        second.join();
+        third.join();
+        forth.join();
         for(int k=0;k<m[1];k++){
           MPI_Sendrecv_replace(&matrix_loc2[k*m[2]],m[2],MPI_FLOAT,dest2,0,source2,0,MPI_COMM_WORLD,&status);
         }
@@ -279,12 +304,34 @@ int main(int argc,char** argv){
           MPI_Sendrecv_replace(&matrix_loc1[k*m[1]],m[1],MPI_FLOAT,dest1,1,source1,1,MPI_COMM_WORLD,&status);
         }
       }
-      strassen(&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],&matrix_loc3[i1],m[2],m[0],m[1],m[2],iter[2]);
+      thread first1(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[i][0],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread second1(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[i][temp_m0*m[2]+temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread third1(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[i][temp_m0*m[2]],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread forth1(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[i][temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      first1.join();
+      second1.join();
+      third1.join();
+      forth1.join();
       for(int k=0;k<m[1];k++){
         MPI_Sendrecv_replace(&matrix_loc2[k*m[2]],m[2],MPI_FLOAT,dest3,2,source3,2,MPI_COMM_WORLD,&status);
       }
       for(int j=0;j<(iter[1]-1);j++){
-        strassen(&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],&matrix_loc3[i1+m[0]*m[2]],m[2],m[0],m[1],m[2],iter[2]);
+        thread first2(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[i+1][0],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread second2(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[i+1][temp_m0*m[2]+temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread third2(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[i+1][temp_m0*m[2]],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread forth2(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[i+1][temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        first2.join();
+        second2.join();
+        third2.join();
+        forth2.join();
         for(int k=0;k<m[1];k++){
           MPI_Sendrecv_replace(&matrix_loc2[k*m[2]],m[2],MPI_FLOAT,source2,0,dest2,0,MPI_COMM_WORLD,&status);
         }
@@ -292,14 +339,36 @@ int main(int argc,char** argv){
           MPI_Sendrecv_replace(&matrix_loc1[k*m[1]],m[1],MPI_FLOAT,source1,1,dest1,1,MPI_COMM_WORLD,&status);
         }
       }
-      strassen(&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],&matrix_loc3[i1+m[0]*m[2]],m[2],m[0],m[1],m[2],iter[2]);
+      thread first3(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[i+1][0],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread second3(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[i+1][temp_m0*m[2]+temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread third3(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[i+1][temp_m0*m[2]],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread forth3(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[i+1][temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      first3.join();
+      second3.join();
+      third3.join();
+      forth3.join();
       for(int k=0;k<m[1];k++){
         MPI_Sendrecv_replace(&matrix_loc2[k*m[2]],m[2],MPI_FLOAT,dest3,2,source3,2,MPI_COMM_WORLD,&status);
       }
     }
     if(iteration[0]%2==1){
       for(int j=0;j<iter[1]-1;j++){
-        strassen(&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],&matrix_loc3[(iteration[0]-1)*m[0]*m[2]],m[2],m[0],m[1],m[2],iter[2]);
+        thread first4(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[iteration[0]-1][0],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread second4(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[iteration[0]-1][temp_m0*m[2]+temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread third4(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[iteration[0]-1][temp_m0*m[2]],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread forth4(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[iteration[0]-1][temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        first4.join();
+        second4.join();
+        third4.join();
+        forth4.join();
         for(int k=0;k<m[1];k++){
           MPI_Sendrecv_replace(&matrix_loc2[k*m[2]],m[2],MPI_FLOAT,dest2,0,source2,0,MPI_COMM_WORLD,&status);
         }
@@ -307,7 +376,18 @@ int main(int argc,char** argv){
           MPI_Sendrecv_replace(&matrix_loc1[k*m[1]],m[1],MPI_FLOAT,dest1,1,source1,1,MPI_COMM_WORLD,&status);
         }
       }
-      strassen(&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],&matrix_loc3[(iteration[0]-1)*m[0]*m[2]],m[2],m[0],m[1],m[2],iter[2]);
+      thread first5(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
+                  &matrix_loc3[iteration[0]-1][0],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread second5(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[temp_m2],m[2],\
+            &matrix_loc3[iteration[0]-1][temp_m0*m[2]+temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread third5(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[0],m[2],\
+                  &matrix_loc3[iteration[0]-1][temp_m0*m[2]],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread forth5(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[iteration[0]-1][temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        first5.join();
+        second5.join();
+        third5.join();
+        forth5.join();
     }
     if(iteration[1]>0){
       int k=0;
@@ -317,7 +397,6 @@ int main(int argc,char** argv){
       for(int k=0;k<m[1];k++){
         MPI_Sendrecv_replace(&matrix_loc2[k*m[2]],m[2],MPI_FLOAT,dest6,2,source6,2,MPI_COMM_WORLD,&status);
       }
-      
       const int source4=dim_rank[1]<iteration[1]? (dim_rank[1]!=(iteration[1]-1) ?source1:\
                       (rank-(iteration[1]-1))):rank;
       const int dest4=dim_rank[1]<iteration[1]? (dim_rank[1]!=0 ? dest1:\
@@ -329,11 +408,24 @@ int main(int argc,char** argv){
                       (iteration[1]-1+((dim_rank[0]+iter[0]-iteration[1]+1)%iter[0])*iter[1])):\
                       (((dim_rank[0]+iter[0]-1)%iter[0])*iter[1]+dim_rank[1]);
       for(int i=0;i<(iteration[1]-1);i++){
-        strassen(&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],&matrix_loc3[iteration[0]*m[0]*m[2]],m[2],m[0],m[1],m[2],iter[2]);
+        thread first6(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[iteration[0]][0],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread second6(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[iteration[0]][temp_m0*m[2]+temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread third6(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[iteration[0]][temp_m0*m[2]],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread forth6(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[iteration[0]][temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        first6.join();
+        second6.join();
+        third6.join();
+        forth6.join();
         for(int k=0;k<m[1];k++){
           MPI_Sendrecv_replace(&matrix_loc2[k*m[2]],m[2],MPI_FLOAT,dest5,0,source5,0,MPI_COMM_WORLD,&status);
+          }
+        for(int k=0;k<m[0];k++){
+          MPI_Sendrecv_replace(&matrix_loc1[k*m[1]],m[1],MPI_FLOAT,dest4,1,source4,1,MPI_COMM_WORLD,&status);
         }
-
         const int color=dim_rank[1]<iteration[1] ? (dim_rank[0]*iter[1]+(dim_rank[1]-i+iteration[1])%iteration[1]):\
                   (dim_rank[0]*iter[1]+dim_rank[1]%iteration[1]);
         int row_rank,row_size;
@@ -345,35 +437,51 @@ int main(int argc,char** argv){
         unique_ptr<float[]>temp_matrix=std::make_unique<float[]>(temp_size*m[2]);
         for(int j=0;j<row_size-1;j++){
           const int send_rank=(row_size+row_rank-j-1)%row_size;
-          MPI_Sendrecv(&matrix_loc3[iteration[0]*m[0]*m[2]+(send_rank*(int)(m[0]/(row_size))+\
+          MPI_Sendrecv(&matrix_loc3[iteration[0]][(send_rank*(int)(m[0]/(row_size))+\
                   (m[0]%row_size>send_rank?send_rank:(m[0]%row_size)))*m[2]],\
                   ((int)(m[0]/row_size)+(m[0]%row_size>send_rank?1:0))*m[2],\
                   MPI_FLOAT,send_rank,0,&temp_matrix[0],temp_size*m[2],MPI_FLOAT,(row_rank+j+1)%row_size,0,row_comm,&status);
-          atomic_add(&temp_matrix[0],m[2],&matrix_loc3[iteration[0]*m[0]*m[2]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
+          atomic_add(&temp_matrix[0],m[2],&matrix_loc3[iteration[0]][(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
                     (m[0]%row_size)))*m[2]],m[2],temp_size,m[2]);
           MPI_Barrier(row_comm);
         }
         memcpy(&temp_matrix[0],&matrix_loc3[(iteration[0]*m[0]+row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
                     (m[0]%row_size)))*m[2]],sizeof(float)*temp_size*m[2]);
-        int* recvcnts=new int[row_size];
-        int* disp=new int[row_size];
-        for(int j=0;j<row_size;j++){
-          recvcnts[j]=((int)(m[0]/row_size)+((m[0]%row_size)>j?1:0))*m[2];
-          disp[j]=(j*(int)(m[0]/row_size)+((m[0]%row_size)>j?j:(m[0]%row_size)))*m[2];
+        int* recvcnts=NULL;
+        int* disp=NULL;
+        if(row_rank==0){
+          recvcnts=new int[row_size];
+          disp=new int[row_size];
+          for(int j=0;j<row_size;j++){
+            recvcnts[j]=((int)(m[0]/row_size)+((m[0]%row_size)>j?1:0))*m[2];
+            disp[j]=(j*(int)(m[0]/row_size)+((m[0]%row_size)>j?j:(m[0]%row_size)))*m[2];
+          }
         }
-        MPI_Gatherv(&temp_matrix[0],temp_size*m[2],MPI_FLOAT,\
-                  &matrix_loc3[iteration[0]*m[0]*m[2]],&recvcnts[0],&disp[0],MPI_FLOAT,0,row_comm);
-        delete recvcnts,disp;
-        //MPI_Wait(&request,&status);
+        MPI_Barrier(row_comm);
+        MPI_Igatherv(&temp_matrix[0],temp_size*m[2],MPI_FLOAT,\
+                  &matrix_loc3[iteration[0]*m[0]*m[2]],&recvcnts[0],&disp[0],MPI_FLOAT,0,row_comm,&request);
+        MPI_Wait(&request,&status);
         if(row_rank!=0){
             memset(&matrix_loc3[iteration[0]*m[0]*m[2]],0,sizeof(float)*m[0]*m[2]);
           }
         for(int k=0;k<m[0];k++){
           MPI_Sendrecv_replace(&matrix_loc1[k*m[1]],m[1],MPI_FLOAT,dest4,1,source4,1,MPI_COMM_WORLD,&status);
         }
+        delete[] recvcnts,disp;
         MPI_Comm_free(&row_comm);
         }
-        strassen(&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],&matrix_loc3[iteration[0]*m[0]*m[2]],m[2],m[0],m[1],m[2],iter[2]);
+        thread first7(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[iteration[0]][0],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread second7(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[iteration[0]][temp_m0*m[2]+temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread third7(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[iteration[0]][temp_m0*m[2]],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        thread forth7(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[iteration[0]][temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+        first7.join();
+        second7.join();
+        third7.join();
+        forth7.join();
         const int color=dim_rank[1]<iteration[1] ? (dim_rank[0]*iter[1]+(dim_rank[1]+1)%iteration[1]):\
                   (dim_rank[0]*iter[1]+dim_rank[1]%iteration[1]);
         int row_rank,row_size;
@@ -384,26 +492,28 @@ int main(int argc,char** argv){
         const int temp_size=(int)(m[0]/row_size)+(m[0]%row_size>row_rank ? 1:0);
         unique_ptr<float[]>temp_matrix=std::make_unique<float[]>(temp_size*m[2]);
         for(int j=0;j<row_size-1;j++){
-          MPI_Sendrecv(&matrix_loc3[iteration[0]*m[0]*m[2]+(((row_size+row_rank-j-1)%row_size)*(int)(m[0]/row_size)+\
+          MPI_Sendrecv(&matrix_loc3[iteration[0]][(((row_size+row_rank-j-1)%row_size)*(int)(m[0]/row_size)+\
                   (m[0]%row_size>((row_size+row_rank-j-1)%row_size)?((row_size+row_rank-j-1)%row_size):(m[0]%row_size)))*m[2]],\
                   ((int)(m[0]/row_size)+(m[0]%row_size>((row_size+row_rank-j-1)%row_size)?1:0))*m[2],\
                     MPI_FLOAT,(row_size+row_rank-j-1)%row_size,0,&temp_matrix[0],temp_size*m[2],MPI_FLOAT,(row_rank+j+1)%row_size,0,row_comm,&status);
-          atomic_add(&temp_matrix[0],m[2],&matrix_loc3[iteration[0]*m[0]*m[2]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
+          atomic_add(&temp_matrix[0],m[2],&matrix_loc3[iteration[0]][(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
                     (m[0]%row_size)))*m[2]],m[2],temp_size,m[2]);
-          MPI_Barrier(row_comm);
         }
-        memcpy(&temp_matrix[0],&matrix_loc3[iteration[0]*m[0]*m[2]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
-                    (m[0]%row_size)))*m[2]],sizeof(float)*temp_size*m[2]);
-        int* recvcnts=new int[row_size];
-        int* disp=new int[row_size];
-        for(int j=0;j<row_size;j++){
-          recvcnts[j]=((int)(m[0]/row_size)+((m[0]%row_size)>j?1:0))*m[2];
-          disp[j]=(j*(int)(m[0]/row_size)+((m[0]%row_size)>j?j:(m[0]%row_size)))*m[2];
+        memcpy(&temp_matrix[0],&matrix_loc3[(iteration[0]*m[0]+(row_rank*(int)(m[0]/row_size)+(m[0]%row_size>row_rank?row_rank:\
+                    (m[0]%row_size))))*m[2]],sizeof(float)*temp_size*m[2]);
+        int* recvcnts=NULL;
+        int* disp=NULL;
+        if(row_rank==0){
+          recvcnts=new int[row_size];
+          disp=new int[row_size];
+          for(int j=0;j<row_size;j++){
+            recvcnts[j]=((int)(m[0]/row_size)+((m[0]%row_size)>j?1:0))*m[2];
+            disp[j]=(j*(int)(m[0]/row_size)+((m[0]%row_size)>j?j:(m[0]%row_size)))*m[2];
+          }
         }
         MPI_Gatherv(&temp_matrix[0],temp_size*m[2],MPI_FLOAT,\
                   &matrix_loc3[iteration[0]*m[0]*m[2]],recvcnts,disp,MPI_FLOAT,0,row_comm);
-        delete recvcnts,disp;
-        //MPI_Wait(&request,&status);
+        delete[] recvcnts,disp;
         MPI_Comm_free(&row_comm);
     }
     MPI_Barrier(MPI_COMM_WORLD);
@@ -417,7 +527,7 @@ int main(int argc,char** argv){
       for(int i=0;i<iteration[0]+(dim_rank[1]<iteration[1]?1:0);i++){
         MPI_File_set_view(matrix3,2*sizeof(int)+sizeof(float)*(((dim_rank[0]+dim_rank[1]+i*iter[1])%iter[0])\
                           *m[2]+dim_rank[0]*n[2]*m[0]),MPI_FLOAT,new_float3,"native",MPI_INFO_NULL);
-        MPI_File_iwrite(matrix3,&matrix_loc3[i*m[0]*m[2]],m[0]*m[2],MPI_FLOAT,&request);
+        MPI_File_iwrite(matrix3,&matrix_loc3[i][0],m[0]*m[2],MPI_FLOAT,&request);
         MPI_Wait(&request,&status);
       }
       MPI_File_close(&matrix3);
@@ -431,7 +541,7 @@ int main(int argc,char** argv){
         const int offset=2*sizeof(int)+sizeof(float)*((gap[2]>shift?(shift*(m1[2]+1)):(gap[2]+shift*m1[2]))+\
                   (gap[0]>dim_rank[0]? (dim_rank[0]*(m1[0]+1)*n[2]):((gap[0]+dim_rank[0]*m1[0])*n[2])));
         for(int j=0;j<row;j++){
-          MPI_File_iwrite_at(matrix3,offset+sizeof(float)*j*n[2],&matrix_loc3[(i*m[0]+j)*m[2]],col,MPI_FLOAT,&request);
+          MPI_File_iwrite_at(matrix3,offset+sizeof(float)*j*n[2],&matrix_loc3[i][j*m[2]],col,MPI_FLOAT,&request);
           MPI_Wait(&request,&status);
         }
       }
@@ -440,18 +550,42 @@ int main(int argc,char** argv){
   }
   else
   {
-    matrix_loc3=std::make_unique<float[]>(NUM_processors*m[0]*m[2]);
+    matrix_loc3=std::make_unique<unique_ptr<float[]>[]>(NUM_processors);
+    for(int i=0;i<NUM_processors;i++)
+      matrix_loc3[i]=std::make_unique<float[]>(m[0]*m[2]);
     start=MPI_Wtime();
     const int source=(dim_rank[0]+1)%NUM_processors;
     const int dest=(dim_rank[0]+NUM_processors-1)%NUM_processors;
     for(int i=0;i<(NUM_processors-1);i++){
-      strassen(&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],&matrix_loc3[i*m[0]*m[2]],m[2],m[0],m[1],m[2],iter[2]);
+      thread first8(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[i][0],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread second8(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[i][temp_m0*m[2]+temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread third8(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[i][temp_m0*m[2]],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      thread forth8(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[i][temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+      first8.join();
+      second8.join();
+      third8.join();
+      forth8.join();
       for(int k=0;k<m[1];k++){
         MPI_Sendrecv_replace(&matrix_loc2[k*m[2]],m[2],MPI_FLOAT,dest,2,source,2,MPI_COMM_WORLD,&status);
         MPI_Barrier(MPI_COMM_WORLD);
       }
     }
-    strassen(&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],&matrix_loc3[(NUM_processors-1)*m[0]*m[2]],m[2],m[0],m[1],m[2],iter[2]);
+    thread first9(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[NUM_processors-1][0],m[2],temp_m0,m[1],temp_m2,iter[2]);
+    thread second9(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[NUM_processors-1][temp_m0*m[2]+temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+    thread third9(strassen<float>,&matrix_loc1[temp_m0*m[1]],m[1],&matrix_loc2[0],m[2],\
+                          &matrix_loc3[NUM_processors-1][temp_m0*m[2]],m[2],temp_m0,m[1],temp_m2,iter[2]);
+    thread forth9(strassen<float>,&matrix_loc1[0],m[1],&matrix_loc2[temp_m2],m[2],\
+              &matrix_loc3[NUM_processors-1][temp_m2],m[2],temp_m0,m[1],temp_m2,iter[2]);
+    first9.join();
+    second9.join();
+    third9.join();
+    forth9.join();
     MPI_Barrier(MPI_COMM_WORLD);
     end=MPI_Wtime();
     /*if(temp[0]==0 && temp[1]==0 && temp[2]==0){
@@ -463,7 +597,7 @@ int main(int argc,char** argv){
       for(int i=0;i<NUM_processors;i++){
         MPI_File_set_view(matrix3,2*sizeof(int)+sizeof(float)*(dim_rank[0]*n[2]*m[0]+((i+dim_rank[0])%NUM_processors)*m[2]),\
                           MPI_FLOAT,new_float3,"native",MPI_INFO_NULL);
-        MPI_File_iwrite(matrix3,&matrix_loc3[i*m[0]*m[2]],m[0]*m[2],MPI_FLOAT,&request);
+        MPI_File_iwrite(matrix3,&matrix_loc3[i][0],m[0]*m[2],MPI_FLOAT,&request);
         MPI_Wait(&request,&status);
       }
       MPI_File_close(&matrix3);
@@ -478,7 +612,7 @@ int main(int argc,char** argv){
         int col=m1[2]+(gap[2] > k ? 1:0);
         for(int j=0;j<row;j++){
           MPI_File_iwrite_at(matrix3,2*sizeof(int)+sizeof(float)*(offset_loop+j*n[2]),\
-                            &matrix_loc3[(i*m[0]+j)*m[2]],col,MPI_FLOAT,&request);
+                            &matrix_loc3[i][j*m[2]],col,MPI_FLOAT,&request);
           MPI_Wait(&request,&status);
       }
     }
