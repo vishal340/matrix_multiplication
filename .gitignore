@@ -1,0 +1,55 @@
+# Build directories
+build/
+CMakeFiles/
+bin/
+obj/
+
+# Compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+
+# CUDA compiled files
+*.cubin
+*.fatbin
+*.ptx
+*.cu.cpp
+
+# Executables
+*.exe
+*.out
+*.app
+sequential_strassen
+simple_ikj
+block_3x3
+strassen_mpi
+strassen_mpi_no_thread
+strassen_mpi_2thread
+strassen_cuda
+conv_bin_txt
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# CMake files
+CMakeCache.txt
+cmake_install.cmake
+*.cmake
+
+# Test output files
+*.txt
+*.log
+*.dat
+
+# Backup files
+*.bak
+*.backup
