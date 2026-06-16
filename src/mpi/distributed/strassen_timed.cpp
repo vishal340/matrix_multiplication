@@ -1,141 +1,21 @@
-#include<iostream>
-#include<fstream>
-#include<cmath>
-#include<memory>
-#include<cstring>
-#include<mpi.h>
+#include <iostream>
+#include <fstream>
+#include <cmath>
+#include <memory>
+#include <cstring>
+#include <mpi.h>
+#include "strassen_mpi.hpp"
 
 using std::unique_ptr;
-
-//Please provide number of processor 
-//some SMALL multiple of sqaure for better result
-//like P=k*q^2 with k being small
-//This code performs C+=A*B
-//In this code C is defined zero before multiplication
-//But you can change it to nonzero C aswell
-
-template<typename T>
-void add(const T* const A,int jump,const T* const B,int jump1,T* C,int jump2,int n1,int n2){
-for(int i=0;i<n1;i++)
-  for(int j=0;j<n2;j++)
-    C[i*jump2+j]=A[i*jump+j]+B[i*jump1+j];
-}
-template<typename T>
-void atomic_add(const T* const A,int jump,T* B,int jump1,int n1,int n2){
-  for(int i=0;i<n1;i++)
-    for(int j=0;j<n2;j++)
-      B[i*jump1+j]+=A[i*jump+j];
-}
-template<typename T>
-void subtract(const T* const A,int jump,const T* const B,int jump1,T* C,int jump2,int n1,int n2){
-  for(int i=0;i<n1;i++)
-    for(int j=0;j<n2;j++)
-      C[i*jump2+j]=A[i*jump+j]-B[i*jump1+j];
-}
-template<typename T>
-void atomic_subtract(const T* const A,int jump,T* B,int jump1,int n1,int n2){
-  for(int i=0;i<n1;i++)
-    for(int j=0;j<n2;j++)
-      B[i*jump1+j]-=A[i*jump+j];
-}
-template<typename T>
-void multiply(const T* const A,int jump,const T* const B,int jump1,T* C,int jump2,int n1,int n2,int n3){
-  for(int j=0;j<n1;j+=2){
-    for(int i=0;i<n2;i+=2){
-      for(int k=0;k<n3;k++){
-        C[j*jump2+k]+=A[i+j*jump]*B[i*jump1+k];
-        C[j*jump2+k]+=A[i+1+j*jump]*B[(i+1)*jump1+k];
-        C[(j+1)*jump2+k]+=A[i+(j+1)*jump]*B[i*jump1+k];
-        C[(j+1)*jump2+k]+=A[(i+1)+(j+1)*jump]*B[(i+1)*jump1+k];
-      }
-    }
-  }
-}
-template<typename T>
-void C_adjust1(T* C,int jump,int n1,int n2){
-  for(int i=0;i<n1;i++){
-    for(int j=0;j<n2;j++){
-      C[i*jump+j]+=(C[i*jump+j+n2]-C[(i+n1)*jump+j]);
-      C[(i+n1)*jump+j+n2]-=C[i*jump+j];
-    }
-  }
-}
-template<typename T>
-void C_adjust2(T* C,int jump,int n1,int n2){
-  for(int i=0;i<n1;i++){
-    for(int j=0;j<n2;j++){
-      C[(i+n1)*jump+j+n2]+=(C[i*jump+j]-C[(i+n1)*jump+j]+C[i*jump+j+n2]);
-    }
-  }
-}
-
-template<typename T>
-void strassen(const T* const A,const int jump,const T* const B,const int jump1, \
-              T* C,const int jump2,int m1,int m2,int m3,int iter){
-  if(iter==1)
-    multiply(A,jump,B,jump1,C,jump2,m1,m2,m3);
-  else{
-    iter>>=1;
-    m1>>=1,m2>>=1,m3>>=1;
-    unique_ptr<T[]>temp1=std::make_unique<T[]>(m1*m2);
-    unique_ptr<T[]>temp2=std::make_unique<T[]>(m2*m3);
-
-    C_adjust1(C,jump2,m1,m3);    //C11+=C12-C21
-                                //C22-=C11
-     //M5
-    add(&A[0],jump,&A[m2],jump,&temp1[0],m2,m1,m2);  //temp1=A11+A12
-    strassen(&temp1[0],m2,&B[jump1*m2+m3],jump1,&C[m3],jump2,m1,m2,m3,iter);  //C12+=temp1*B22
-    atomic_subtract(&C[m3],jump2,&C[0],jump2,m1,m3);  //C11-=C12
-    //M3
-    subtract(&B[m3],jump1,&B[m3+jump1*m2],jump1,&temp2[0],m3,m2,m3);  //temp2=B12-B22
-    strassen(&A[0],jump,&temp2[0],m3,&C[m3],jump2,m1,m2,m3,iter);  //C12+=A11*temp2
-    //M4
-    subtract(&B[jump1*m2],jump1,&B[0],jump1,&temp2[0],m3,m2,m3);  //temp2=B21-B11
-    strassen(&A[jump*m1+m2],jump,&temp2[0],m3,&C[jump2*m1],jump2,m1,m2,m3,iter);  //C21+=A22*temp2
-    atomic_add(&C[jump2*m1],jump2,&C[0],jump2,m1,m3);   //C11+=C21
-    //M2
-    add(&A[jump*m1],jump,&A[jump*m1+m2],jump,&temp1[0],m2,m1,m2);  //temp1=A21+A22
-    strassen(&temp1[0],m2,&B[0],jump1,&C[jump2*m1],jump2,m1,m2,m3,iter);  //C21+=temp1*B11
-    //M1
-    add(&A[0],jump,&A[jump*m1+m2],jump,&temp1[0],m2,m1,m2);   //temp1=A11+A22
-    add(&B[0],jump1,&B[jump1*m2+m3],jump1,&temp2[0],m3,m2,m3);   //temp2=B11+B22
-    strassen(&temp1[0],m2,&temp2[0],m3,&C[0],jump2,m1,m2,m3,iter);   //C11+=temp1*temp2
-
-    C_adjust2(&C[0],jump2,m1,m3);     //C22+=C11-C21+C12
-    
-    //M6
-    subtract(&A[jump*m1],jump,&A[0] ,jump,&temp1[0],m2,m1,m2);   //temp1=A21-A11
-    add(&B[0],jump1,&B[m3],jump1,&temp2[0],m3,m2,m3);    //temp2=B11+B12
-    strassen(&temp1[0],m2,&temp2[0],m3,&C[jump2*m1+m3],jump2,m1,m2,m3,iter);  //C22+=M6
-    //M7
-    subtract(&A[m2],jump,&A[jump*m1+m2],jump,&temp1[0],m2,m1,m2);   //temp1=A12-A22
-    add(&B[jump1*m2],jump1,&B[jump1*m2+m3],jump1,&temp2[0],m3,m2,m3);   //temp2=B21+B22
-    strassen(&temp1[0],m2,&temp2[0],m3,&C[0],jump2,m1,m2,m3,iter);  //C11+=M7
-  }
-}
-int nearest_ideal(int &n,int &temp,const int temp1,const int threshold)
-{
-  int t=(temp1-n%temp1)%temp1;
-  int pow=1;
-  n+=t;
-  int m=(int)(n/temp1);
-  while(m>threshold){
-    if(m%2==1){
-        temp+=pow;
-        m++;
-    }
-  m>>=1;
-  pow<<=1;
-  }
-  temp*=temp1;
-  n+=temp;
-  temp+=t;
-  if(m%2==1){
-    n+=(pow*temp1);
-    temp+=(pow*temp1);
-  }
-  return pow;
-}
+using strassen_mpi::add;
+using strassen_mpi::atomic_add;
+using strassen_mpi::atomic_subtract;
+using strassen_mpi::C_adjust1;
+using strassen_mpi::C_adjust2;
+using strassen_mpi::multiply;
+using strassen_mpi::nearest_ideal;
+using strassen_mpi::strassen;
+using strassen_mpi::subtract;
 
 int main(int argc,char** argv){
   MPI_Init(&argc,&argv);

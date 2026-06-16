@@ -1,102 +1,58 @@
-# Matrix Multiplication using Strassen's Algorithm
+# Matrix Multiplication
 
-A C++/CUDA program for high-performance matrix multiplication using Strassen's method for both square and non-square matrices.
+Fast matrix multiply in C++, with MPI and CUDA variants. Implements Strassen's algorithm and Laderman's 3×3 scheme (23 multiplies instead of 27 per tile). Works on non-square matrices too — they get zero-padded and trimmed on output.
 
-## Features
+## What's here
 
-- **Sequential Strassen**: CPU-based Strassen algorithm implementation
-- **Simple IKJ**: Basic O(n³) matrix multiplication for comparison
-- **3x3 Block Multiplication**: Cache-optimized block-based multiplication
-- **MPI Strassen**: Distributed memory parallelization using MPI
-- **MPI Strassen (2-thread)**: MPI with pthread support for hybrid parallelism
-- **CUDA Strassen**: GPU-accelerated implementation
+**Strassen** — `sequential_strassen`, `strassen_mpi`, `strassen_mpi_no_thread`, `strassen_mpi_2thread`, plus distributed versions (`strassen_mpi_distributed*`) that read binary input. `strassen_cuda` is the CUDA build.
 
-## Project Structure
+**Laderman** — `laderman_3x3` (timed), `block_3x3` (same thing, no timing), MPI variants (`laderman_mpi*`), and `laderman_cuda` with a real GPU kernel.
 
-```
-.
-├── src/                          # Source implementations
-│   ├── sequential_strassen.cpp   # Sequential Strassen algorithm
-│   ├── simpleIKJ.cpp             # Simple IKJ multiplication
-│   ├── 3_3.cpp                   # 3x3 block multiplication
-│   ├── strassen_mpi.cpp          # MPI-based Strassen
-│   ├── strassen_mpi_without_thread.cpp
-│   ├── strassen_mpi_2thread.cpp  # MPI + threads Strassen
-│   └── strassenRec.cu            # CUDA Strassen
-├── tests/                        # Test utilities and validation
-│   ├── conv_bin_txt.cpp          # Binary to text converter
-│   └── test_correct.pp           # Result verification tool
-├── include/                      # Header files (future)
-├── CMakeLists.txt                # Build configuration
-├── .gitignore                    # Git ignore rules
-└── README.md                     # This file
-```
+**Baseline** — `simple_ikj` for plain O(n³) comparison.
 
-## Requirements
+## Build
 
-- C++11 or higher
-- CUDA Toolkit (for GPU version)
-- OpenMPI or MPICH (for distributed versions)
-- CMake 3.10+
-
-## Building
+Needs C++11, CMake 3.10+, and optionally CUDA + MPI depending on what you want to compile.
 
 ```bash
-mkdir build
-cd build
+mkdir build && cd build
 cmake ..
 make
 ```
 
-Executables will be generated in `build/bin/`
+Binaries land in `build/bin/`.
 
-## Input Format
+## Input
 
-Matrix files should be formatted as:
+Text files: first line is `rows cols`, then the entries row by row (tabs or spaces fine).
+
 ```
-<rows> <columns>
-element_1_1  element_1_2  ...  element_1_c
-element_2_1  element_2_2  ...  element_2_c
-...
-element_r_1  element_r_2  ...  element_r_c
+3 3
+1 2 3
+4 5 6
+7 8 9
 ```
 
-Minimum size: 32x32
+The distributed Strassen programs want binary matrices instead — use `conv_bin_txt` to convert if you need to inspect them.
 
-## Usage Examples
+## Run
 
-### Sequential Strassen
+Everything text-based takes three args: `matrix_a matrix_b output`.
+
 ```bash
-./sequential_strassen matrix_a.txt matrix_b.txt output.txt log.txt
+./sequential_strassen matrix_a.txt matrix_b.txt out.txt
+./laderman_3x3 matrix_a.txt matrix_b.txt out.txt
+
+mpirun -np 4 ./strassen_mpi matrix_a.txt matrix_b.txt out.txt
+mpirun -np 4 ./laderman_mpi matrix_a.txt matrix_b.txt out.txt
+
+./laderman_cuda matrix_a.txt matrix_b.txt out.txt
 ```
 
-### MPI Version
-```bash
-mpirun -np 4 ./strassen_mpi matrix_a.txt matrix_b.txt output.txt log.txt
-```
+Some builds print timing to stdout before writing the result.
 
-### CUDA Version
-```bash
-./strassen_cuda matrix_a.txt matrix_b.txt output.txt log.txt
-```
+## A few details
 
-## Algorithm Complexity
+Strassen recurses on 2×2 blocks and falls back to naive multiply at 32×32. Laderman tiles everything into 3×3 blocks. `simple_ikj` doesn't pad at all.
 
-Strassen's algorithm reduces matrix multiplication complexity from O(n³) to O(n^2.807)
-
-## Verification
-
-Use the test utilities to verify results:
-```bash
-./conv_bin_txt input_binary.dat input_text.txt
-```
-
-## Notes
-
-- The sequential version uses a threshold of 32x32 for switching to standard multiplication
-- Non-square matrices are padded to square dimensions with zeros
-- Padding values are tracked and removed from output
-
-## License
-
-MIT
+MIT license.

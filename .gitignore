@@ -43,6 +43,7 @@ conv_bin_txt
 # CMake files
 CMakeCache.txt
 cmake_install.cmake
+compile_commands.json
 *.cmake
 
 # Test output files
